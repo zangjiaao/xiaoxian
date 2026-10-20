@@ -1,6 +1,7 @@
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Card } from '@astryxdesign/core/Card'
+import { Collapsible } from '@astryxdesign/core/Collapsible'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { HStack } from '@astryxdesign/core/HStack'
@@ -31,6 +32,7 @@ export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState('')
+  const [streamingReasoning, setStreamingReasoning] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [hasKey, setHasKey] = useState(true)
@@ -48,7 +50,7 @@ export function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, streaming, busy])
+  }, [messages, streaming, streamingReasoning, busy])
 
   useEffect(() => {
     let cancelled = false
@@ -120,6 +122,7 @@ export function ChatPage() {
     setError('')
     setBusy(true)
     setStreaming('')
+    setStreamingReasoning('')
     const settings = await getLlmSettings()
     if (!settings.apiKey) {
       setHasKey(false)
@@ -164,7 +167,10 @@ export function ChatPage() {
       const reply = await streamChat({
         settings,
         signal: controller.signal,
-        onDelta: setStreaming,
+        onDelta: (update) => {
+          setStreaming(update.content)
+          setStreamingReasoning(update.reasoning)
+        },
         messages: [
           { role: 'system', content: buildSystemPrompt(profile, chart) },
           ...history.slice(-40).map((message) => ({
@@ -173,7 +179,8 @@ export function ChatPage() {
           })),
         ],
       })
-      const text = reply.trim()
+      const text = reply.content.trim()
+      const thought = reply.reasoning.trim()
       if (!text) {
         setError('这次没有生成内容，可以换种说法再试。')
         return
@@ -183,6 +190,7 @@ export function ChatPage() {
         session_id: activeSession,
         role: 'assistant',
         content: text,
+        ...(thought ? { reasoning: thought } : {}),
         created_at: nowIso(),
       }
       await db.chat_messages.put(assistant)
@@ -192,6 +200,7 @@ export function ChatPage() {
       })
       setMessages((current) => [...current, assistant])
       setStreaming('')
+      setStreamingReasoning('')
       setSessions((current) =>
         current
           .map((session) =>
@@ -209,6 +218,16 @@ export function ChatPage() {
       setBusy(false)
       abortRef.current = null
     }
+  }
+
+  function Thought({ text, open = false }: { text: string; open?: boolean }) {
+    return (
+      <Collapsible defaultIsOpen={open} trigger={<Text type="supporting">思考过程</Text>}>
+        <Text type="supporting" {...stylex.props(styles.prose)}>
+          {text}
+        </Text>
+      </Collapsible>
+    )
   }
 
   function stop() {
@@ -240,7 +259,7 @@ export function ChatPage() {
     <VStack gap={3}>
       <Heading level={2}>和{profile.display_name}聊聊</Heading>
       <Text type="supporting">
-        小闲会看到当前四柱、大运和流年。它负责陪你想，不负责下判决。
+        小闲会带上这张盘的机器排盘。问批盘或运势时，它按日主、十神、五行、格局、大运、流年来写；聊今天的事，就短一些。
       </Text>
       <Selector
         label="档案"
@@ -263,6 +282,7 @@ export function ChatPage() {
             setSessionId(null)
             setMessages([])
             setStreaming('')
+            setStreamingReasoning('')
             setError('')
           }}
           isDisabled={busy}
@@ -300,14 +320,16 @@ export function ChatPage() {
           >
             <VStack gap={1}>
               <Text type="supporting">{message.role === 'user' ? profile.display_name : '小闲'}</Text>
+              {message.reasoning ? <Thought text={message.reasoning} /> : null}
               <Text {...stylex.props(styles.prose)}>{message.content}</Text>
             </VStack>
           </Card>
         ))}
-        {busy || streaming ? (
+        {busy || streaming || streamingReasoning ? (
           <Card padding={3} xstyle={styles.bubbleAssistant}>
             <VStack gap={1}>
               <Text type="supporting">小闲</Text>
+              {streamingReasoning ? <Thought text={streamingReasoning} open /> : null}
               <Text {...stylex.props(styles.prose)}>{streaming || '在想怎么说…'}</Text>
             </VStack>
           </Card>

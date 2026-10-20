@@ -36,6 +36,7 @@ export interface ChatMessage {
   session_id: string
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string
   created_at: string
 }
 

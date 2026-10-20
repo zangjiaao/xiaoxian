@@ -1,4 +1,5 @@
-import { computeChart } from './chart.ts'
+import { computeChart, formatChartReport } from './chart.ts'
+import { parseCompletionPayload } from './llm.ts'
 import type { Profile } from '../types.ts'
 
 function profile(partial: Partial<Profile> & Pick<Profile, 'gender' | 'birth_hour'>): Profile {
@@ -42,5 +43,36 @@ assert(six.warnings.some((warning) => warning.includes('六字')), '应说明六
 
 const early = computeChart(profile({ gender: 'male', birth_hour: 14, birth_minute: 30 }), new Date('2026-01-15T04:00:00.000Z'))
 assert(early.liuNian.ganZhi === '乙巳' && early.liuNian.beforeLiChun, '立春前流年仍是乙巳')
+
+const fullProfile = profile({ gender: 'male', birth_hour: 14, birth_minute: 30 })
+const report = formatChartReport(fullProfile, chart)
+for (const heading of ['## 输入', '## 四柱', '## 日主', '## 大运', '## 流年', '## 警告']) {
+  assert(report.includes(heading), `报告缺少 ${heading}`)
+}
+assert(report.includes('姓名：阿树') && report.includes('性别：男'), '输入段应含姓名性别')
+assert(report.includes('钟表模式：civil / 北京时间'), '应标明钟表模式')
+assert(report.includes('时辰：时辰已知'), '已知时辰应标明')
+assert(report.includes('庚午') && report.includes('戊寅') && report.includes('戊辰') && report.includes('己未'), '四柱干支应原样出现')
+assert(report.includes('十神（干）') && report.includes('藏干与十神') && report.includes('纳音'), '四柱应含十神藏干纳音')
+assert(report.includes('壬午') && report.includes('← 当前'), '当前大运应标出')
+assert(report.includes('丙午'), '流年干支应出现')
+assert(report.includes('本引擎暂未计算神煞'), '未计算神煞时应明确说明')
+assert(!report.includes('天乙贵人'), '报告不应编造神煞')
+
+const sixReport = formatChartReport(profile({ gender: 'female', birth_hour: null, birth_minute: null }), six)
+assert(sixReport.includes('时辰：六字（时柱未知）'), '六字盘应标明')
+assert(sixReport.includes('禁止补写时柱'), '未知时柱应禁止补写')
+
+const earlyReport = formatChartReport(fullProfile, early)
+assert(earlyReport.includes('立春前') && earlyReport.includes('乙巳'), '立春前报告应保留乙巳')
+
+const thought = parseCompletionPayload(
+  JSON.stringify({ choices: [{ delta: { reasoning_content: '先看日主', content: null } }] }),
+)
+assert(thought.reasoning === '先看日主' && thought.content === '', '应读出思考过程')
+const answer = parseCompletionPayload(
+  JSON.stringify({ choices: [{ delta: { content: '结论' }, message: { reasoning_content: '忽略' } }] }),
+)
+assert(answer.content === '结论' && answer.reasoning === '', '流式正文优先于 message')
 
 console.log('chart smoke ok', chart.dayMaster, chart.currentDaYun?.label, chart.liuNian.ganZhi)

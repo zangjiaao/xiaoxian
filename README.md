@@ -39,7 +39,7 @@ npm run preview
 设置页粘贴 DeepSeek API Key。它只写入这台浏览器的 IndexedDB（Dexie），不会进入代码仓库，也没有后端代发。
 
 - 默认接口：`https://api.deepseek.com`
-- 默认模型：`deepseek-chat`
+- 默认模型：`deepseek-chat`（更快）。设置里可以换成 `deepseek-reasoner`，回复前会多一段可折叠的「思考过程」
 - 也可以改成别的 OpenAI Chat Completions 兼容地址和模型名
 - 换浏览器、换设备或清除站点数据后，需要重新粘贴
 - 同一台设备上能打开这个页面的人，也能读到这把密钥
@@ -66,6 +66,12 @@ npm run preview
 
 本版没有改用 Ant Design。若以后 Astryx 的 Vite 插件无法安装，可以换成薄的 Ant Design 层，页面和数据流不必改。
 
+## 分析框架
+
+聊天会把浏览器里算出的机器排盘全文放进提示词，并按对方这句话决定写完整批盘还是短回复。问批盘、排盘、运势、分析八字、看命盘、大运流年时，按日主、十神、五行、格局、大运、流年、建议来写；聊日常就只连到当前大运、流年和相关十神。干支以机器报告为准，模型不能改。本引擎不计算神煞。
+
+这套顺序和经典摘要来自 [bazi-skill](https://github.com/jinchenma94/bazi-skill)（MIT，Copyright (c) 2025 jinchenma94）。参考文本在 `vendor/bazi-skill/`：`SKILL.md`、`classical-texts.md`、`wuxing-tables.md`、`dayun-rules.md`、`shensha-table.md`，许可证原文是同目录的 `LICENSE`。浏览器里不运行该仓库的 Python 排盘脚本。
+
 ## 这版没有做
 
-真太阳时、六爻、推送通知、后端、Cloudflare Worker、多用户同步。
+真太阳时、六爻、神煞、推送通知、后端、Cloudflare Worker、多用户同步。

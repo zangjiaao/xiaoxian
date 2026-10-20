@@ -73,8 +73,20 @@ export function SettingsPage() {
         label="模型"
         value={settings.model}
         onChange={(value) => setSettings((current) => ({ ...current, model: value }))}
-        description="默认 deepseek-chat。"
+        description="默认 deepseek-chat，回复更快。完整批盘若想看见推理，可改成 deepseek-reasoner，聊聊里会多一块可折叠的「思考过程」。模型名也可以手写。"
       />
+      <HStack gap={2} wrap="wrap">
+        <Button
+          label="deepseek-chat"
+          variant={settings.model.trim() === 'deepseek-chat' ? 'primary' : 'secondary'}
+          onClick={() => setSettings((current) => ({ ...current, model: 'deepseek-chat' }))}
+        />
+        <Button
+          label="deepseek-reasoner"
+          variant={settings.model.trim() === 'deepseek-reasoner' ? 'primary' : 'secondary'}
+          onClick={() => setSettings((current) => ({ ...current, model: 'deepseek-reasoner' }))}
+        />
+      </HStack>
       <HStack gap={2} wrap="wrap">
         <Button label="保存" variant="primary" onClick={() => void save()} />
         <Button
@@ -91,7 +103,7 @@ export function SettingsPage() {
       </HStack>
       {notice ? <Text>{notice}</Text> : null}
       <Text type="supporting">
-        排盘不调用这个接口。只有「聊聊」会把档案摘要和命盘文本发给你填写的地址。
+        排盘不调用这个接口。只有「聊聊」会把机器排盘全文和你的话发给你填写的地址。
       </Text>
     </VStack>
   )

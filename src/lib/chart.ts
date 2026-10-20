@@ -1,4 +1,5 @@
 import { Solar } from 'lunar-typescript'
+import { formatBirth, genderLabel } from './birth.ts'
 import type { ChartPayload, DaYunItem, Pillar, Profile } from '../types.ts'
 
 const STEM_ELEMENT: Record<string, string> = {
@@ -253,4 +254,77 @@ export function currentDaYunLine(chart: ChartPayload): string {
 export function liuNianLine(chart: ChartPayload): string {
   const prefix = chart.liuNian.beforeLiChun ? `公历${chart.liuNian.gregorianYear}年立春前，` : ''
   return `${prefix}${chart.liuNian.year} ${chart.liuNian.ganZhi}`
+}
+
+function formatWuXing(value: string): string {
+  const chars = [...value]
+  if (chars.length === 2) return chars.join('、')
+  return value || '—'
+}
+
+function formatPillarBlock(pillar: Pillar): string {
+  if (!pillar.known) {
+    return `- ${pillar.label}：未知（六字盘。禁止补写时柱干支、十神或纳音）`
+  }
+  const hidden = pillar.hidden.length > 0 ? pillar.hidden.join('、') : '无'
+  return [
+    `- ${pillar.label}：${pillar.ganZhi}`,
+    `  - 十神（干）：${pillar.shiShenGan || '—'}`,
+    `  - 藏干与十神：${hidden}`,
+    `  - 五行：${formatWuXing(pillar.wuXing)}`,
+    `  - 纳音：${pillar.naYin || '—'}`,
+  ].join('\n')
+}
+
+export function formatChartReport(profile: Profile, chart: ChartPayload): string {
+  const place = profile.birth_place.trim() || '未填'
+  const hourLine = chart.hourKnown ? '时辰已知' : '六字（时柱未知）'
+  const notes = profile.notes.trim()
+  const daYunLines = chart.daYun.map((item) => {
+    const mark = item.isCurrent ? ' ← 当前' : ''
+    const name = item.isPreYun ? '起运前' : item.ganZhi || item.label
+    return `- ${name}｜${item.startAge}–${item.endAge}岁｜${item.startYear}–${item.endYear}${mark}`
+  })
+  const liuNian = chart.liuNian.beforeLiChun
+    ? `公历 ${chart.liuNian.gregorianYear} 年立春前。流年仍是 ${chart.liuNian.year} ${chart.liuNian.ganZhi}。不要改成公历新年的干支。`
+    : `公历 ${chart.liuNian.gregorianYear} 年。流年 ${chart.liuNian.year} ${chart.liuNian.ganZhi}。`
+  const warnings =
+    chart.warnings.length > 0 ? chart.warnings.map((warning) => `- ${warning}`).join('\n') : '- 无'
+  const lines = [
+    '## 输入',
+    `姓名：${profile.display_name}`,
+    `性别：${genderLabel(profile.gender)}`,
+    `公历出生：${formatBirth(profile)}`,
+    `出生地：${place}`,
+    '钟表模式：civil / 北京时间',
+    `时辰：${hourLine}`,
+  ]
+  if (notes) lines.push(`备注：${notes}`)
+  lines.push(
+    '',
+    '## 四柱',
+    ...chart.pillars.map(formatPillarBlock),
+    '',
+    '## 日主',
+    `${chart.dayMaster}${chart.dayMasterElement}。${chart.dayMasterNote}`,
+    `十神要点：${chart.tenGodsBrief}`,
+    '',
+    '## 大运',
+    `方向：${chart.yunDirection}`,
+    `起运：${chart.yunStartText}`,
+    daYunLines.length > 0 ? daYunLines.join('\n') : '- 未列出大运',
+    '',
+    '## 流年',
+    liuNian,
+  )
+  if (chart.lunarText) lines.push(`农历参考：${chart.lunarText}`)
+  lines.push(
+    '',
+    '## 神煞',
+    '本引擎暂未计算神煞。不要编造、补算或列举神煞。',
+    '',
+    '## 警告',
+    warnings,
+  )
+  return lines.join('\n')
 }

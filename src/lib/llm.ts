@@ -31,12 +31,39 @@ function explainStatus(status: number, body: string, apiKey: string): string {
   return `模型服务返回了 ${status}：${detail}`
 }
 
+export interface ChatStream {
+  content: string
+  reasoning: string
+}
+
+export interface CompletionDelta {
+  content: string
+  reasoning: string
+}
+
+export function parseCompletionPayload(data: string): CompletionDelta {
+  const parsed = JSON.parse(data) as {
+    choices?: Array<{
+      delta?: { content?: string | null; reasoning_content?: string | null }
+      message?: { content?: string | null; reasoning_content?: string | null }
+    }>
+  }
+  const choice = parsed.choices?.[0]
+  const source = choice?.delta ?? choice?.message
+  const content = source?.content ?? ''
+  const reasoning = source?.reasoning_content ?? ''
+  return {
+    content: typeof content === 'string' ? content : '',
+    reasoning: typeof reasoning === 'string' ? reasoning : '',
+  }
+}
+
 export async function streamChat(options: {
   settings: LlmSettings
   messages: ChatTurn[]
-  onDelta: (text: string) => void
+  onDelta: (update: ChatStream) => void
   signal?: AbortSignal
-}): Promise<string> {
+}): Promise<ChatStream> {
   const apiKey = options.settings.apiKey.trim()
   if (!apiKey) {
     throw new Error('还没有填写 API Key。到设置页粘贴一把 DeepSeek 密钥即可。')
@@ -69,58 +96,49 @@ export async function streamChat(options: {
 
   if (!response.body) {
     const body = await response.text()
-    return readWhole(body, apiKey)
+    const whole = readWhole(body, apiKey)
+    options.onDelta(whole)
+    return whole
   }
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  let full = ''
+  let content = ''
+  let reasoning = ''
+  const emit = (piece: CompletionDelta) => {
+    if (!piece.content && !piece.reasoning) return
+    content += piece.content
+    reasoning += piece.reasoning
+    options.onDelta({ content, reasoning })
+  }
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      const piece = takeDelta(line, apiKey)
-      if (!piece) continue
-      full += piece
-      options.onDelta(full)
-    }
+    for (const line of lines) emit(takeDelta(line, apiKey))
   }
-  if (buffer.trim()) {
-    const piece = takeDelta(buffer, apiKey)
-    if (piece) {
-      full += piece
-      options.onDelta(full)
-    }
-  }
-  return full
+  if (buffer.trim()) emit(takeDelta(buffer, apiKey))
+  return { content, reasoning }
 }
 
-function readWhole(body: string, apiKey: string): string {
+function readWhole(body: string, apiKey: string): ChatStream {
   try {
-    const parsed = JSON.parse(body) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    return parsed.choices?.[0]?.message?.content ?? ''
+    return parseCompletionPayload(body)
   } catch {
     throw new Error(sanitize(body, apiKey) || '模型没有返回可读内容。')
   }
 }
 
-function takeDelta(line: string, apiKey: string): string {
+function takeDelta(line: string, apiKey: string): CompletionDelta {
   const trimmed = line.trim()
-  if (!trimmed.startsWith('data:')) return ''
+  if (!trimmed.startsWith('data:')) return { content: '', reasoning: '' }
   const data = trimmed.slice(5).trim()
-  if (!data || data === '[DONE]') return ''
+  if (!data || data === '[DONE]') return { content: '', reasoning: '' }
   try {
-    const parsed = JSON.parse(data) as {
-      choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>
-    }
-    const choice = parsed.choices?.[0]
-    return choice?.delta?.content ?? choice?.message?.content ?? ''
+    return parseCompletionPayload(data)
   } catch {
     throw new Error(sanitize(data, apiKey) || '流式回复解析失败。')
   }
