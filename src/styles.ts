@@ -12,9 +12,7 @@ export const styles = stylex.create({
     flexDirection: 'column',
     overflow: 'hidden',
     boxSizing: 'border-box',
-    paddingTop: 'env(safe-area-inset-top)',
     paddingRight: 'env(safe-area-inset-right)',
-    paddingBottom: 'calc(env(safe-area-inset-bottom) * (1 - var(--keyboard-open, 0)))',
     paddingLeft: 'env(safe-area-inset-left)',
     backgroundColor: colorVars['--color-background-body'],
   },
@@ -27,7 +25,7 @@ export const styles = stylex.create({
     width: '100%',
     maxWidth: '880px',
     marginInline: 'auto',
-    paddingTop: '6px',
+    paddingTop: 'calc(6px + env(safe-area-inset-top))',
     paddingBottom: '2px',
     paddingLeft: '16px',
     paddingRight: '16px',
@@ -35,7 +33,7 @@ export const styles = stylex.create({
     backgroundColor: colorVars['--color-background-body'],
     '@media (min-width: 720px)': {
       gap: '12px',
-      paddingTop: '12px',
+      paddingTop: 'calc(12px + env(safe-area-inset-top))',
       paddingBottom: '4px',
     },
   },
@@ -105,6 +103,12 @@ export const styles = stylex.create({
     paddingLeft: '16px',
     paddingRight: '16px',
     boxSizing: 'border-box',
+  },
+  mainSafeBottom: {
+    paddingBottom: 'calc(12px + env(safe-area-inset-bottom) * (1 - var(--keyboard-open, 0)))',
+    '@media (min-width: 720px)': {
+      paddingBottom: 'calc(16px + env(safe-area-inset-bottom) * (1 - var(--keyboard-open, 0)))',
+    },
   },
   stack: {
     display: 'flex',
@@ -228,6 +232,7 @@ export const styles = stylex.create({
     flexDirection: 'column',
     gap: '8px',
     paddingTop: '8px',
+    paddingBottom: 'calc(env(safe-area-inset-bottom) * (1 - var(--keyboard-open, 0)))',
     borderTopWidth: '1px',
     borderTopStyle: 'solid',
     borderTopColor: colorVars['--color-border'],

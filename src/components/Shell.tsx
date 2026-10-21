@@ -34,6 +34,7 @@ export function Shell() {
   const location = useLocation()
   const navigate = useNavigate()
   const current = tabFromPath(location.pathname)
+  const isChat = location.pathname.startsWith('/chat')
 
   useEffect(() => {
     syncVisualViewport()
@@ -74,7 +75,7 @@ export function Shell() {
           ))}
         </TabList>
       </div>
-      <main {...stylex.props(styles.main)} data-app-main>
+      <main {...stylex.props(styles.main, !isChat && styles.mainSafeBottom)} data-app-main>
         <Outlet />
       </main>
     </div>
