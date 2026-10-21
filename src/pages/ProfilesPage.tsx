@@ -13,6 +13,7 @@ import { LegacyImport } from '../components/LegacyImport.tsx'
 import { formatBirth, genderLabel } from '../lib/birth.ts'
 import { setLastProfileId } from '../lib/settings.ts'
 import { listProfiles, removeProfile } from '../lib/store.ts'
+import { styles } from '../styles.ts'
 import type { Profile } from '../types.ts'
 
 export function ProfilesPage() {
@@ -60,7 +61,9 @@ export function ProfilesPage() {
   return (
     <VStack gap={4}>
       <HStack gap={3} align="center" justify="between">
-        <Heading level={2}>档案</Heading>
+        <Heading level={2} xstyle={styles.pageTitle}>
+          档案
+        </Heading>
         <Button label="新建档案" variant="primary" onClick={() => navigate('/profiles/new')} />
       </HStack>
       <LegacyImport onImported={() => void load()} />
@@ -72,7 +75,7 @@ export function ProfilesPage() {
           collapsible={false}
         />
       ) : null}
-      <Text type="supporting">
+      <Text type="supporting" xstyle={styles.pageLead}>
         档案按登录邮箱分开存在云端。时辰可以先空着，排盘会标成六字。
       </Text>
       {profiles.length === 0 ? (

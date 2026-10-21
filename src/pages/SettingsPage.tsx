@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { LegacyImport } from '../components/LegacyImport.tsx'
 import { DEFAULT_MODEL, isLlmModel, type LlmModel } from '../lib/models.ts'
 import { DEFAULT_LLM, getLlmSettings, loadAppSettings, saveLlmSettings } from '../lib/settings.ts'
+import { styles } from '../styles.ts'
 
 export function SettingsPage() {
   const [model, setModel] = useState<LlmModel>(DEFAULT_MODEL)
@@ -47,7 +48,9 @@ export function SettingsPage() {
 
   return (
     <VStack gap={4}>
-      <Heading level={2}>设置</Heading>
+      <Heading level={2} xstyle={styles.pageTitle}>
+        设置
+      </Heading>
       <LegacyImport includeDismissed />
       <Banner
         status="info"

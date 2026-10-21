@@ -109,7 +109,9 @@ export function ChartPage() {
   return (
     <VStack gap={4}>
       <HStack gap={3} align="center" justify="between" wrap="wrap">
-        <Heading level={2}>{profile.display_name}的四柱</Heading>
+        <Heading level={2} xstyle={styles.pageTitle}>
+          {profile.display_name}的四柱
+        </Heading>
         <Button label="拿去聊聊" variant="primary" onClick={() => navigate(`/chat/${profile.id}`)} />
       </HStack>
       <Selector
@@ -130,7 +132,7 @@ export function ChartPage() {
         description="干支可以当性格和节奏的比喻。健康、法律和重大财务决定，请找对应的专业人士。"
         collapsible={false}
       />
-      <Text type="supporting">
+      <Text type="supporting" xstyle={styles.pageLead}>
         {genderLabel(profile.gender)} · {formatBirth(profile)}
         {profile.birth_place ? ` · ${profile.birth_place}` : ''} · 农历 {chart.lunarText}
       </Text>

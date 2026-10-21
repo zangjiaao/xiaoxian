@@ -2,15 +2,18 @@ import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Card } from '@astryxdesign/core/Card'
 import { Collapsible } from '@astryxdesign/core/Collapsible'
+import { DropdownMenu, type DropdownMenuTriggerProps } from '@astryxdesign/core/DropdownMenu'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
-import { Heading } from '@astryxdesign/core/Heading'
 import { HStack } from '@astryxdesign/core/HStack'
-import { Selector } from '@astryxdesign/core/Selector'
+import { Icon } from '@astryxdesign/core/Icon'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { VStack } from '@astryxdesign/core/VStack'
+import { useMediaQuery } from '@astryxdesign/core/hooks'
 import * as stylex from '@stylexjs/stylex'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { StyleXStyles } from '@stylexjs/stylex'
+import { useEffect, useLayoutEffect, useRef, useState, type SVGProps } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MarkdownText } from '../components/MarkdownText.tsx'
 import { formatBirth } from '../lib/birth.ts'
@@ -22,6 +25,41 @@ import { getLastProfileId, getLlmSettings, setLastProfileId } from '../lib/setti
 import { listMessages, listProfiles, listSessions, saveMessage, saveSession } from '../lib/store.ts'
 import { styles } from '../styles.ts'
 import type { ChatMessage, ChatSession, Profile } from '../types.ts'
+
+function ComposeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true" {...props}>
+      <path strokeLinecap="round" d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+function PickerTrigger({
+  label,
+  text,
+  pickerStyle,
+  triggerProps,
+  isDisabled,
+}: {
+  label: string
+  text: string
+  pickerStyle: StyleXStyles
+  triggerProps: DropdownMenuTriggerProps
+  isDisabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      {...triggerProps}
+      aria-label={label}
+      disabled={isDisabled}
+      {...stylex.props(styles.chatPicker, pickerStyle)}
+    >
+      <span {...stylex.props(styles.chatPickerLabel)}>{text}</span>
+      <Icon icon="chevronDown" size="sm" />
+    </button>
+  )
+}
 
 export function ChatPage() {
   const { id } = useParams()
@@ -40,6 +78,8 @@ export function ChatPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading')
   const abortRef = useRef<AbortController | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const narrow = useMediaQuery('(max-width: 768px)')
+  const menuPresentation = narrow ? 'bottom-sheet' : 'popover'
 
   useEffect(() => {
     document.title = '聊聊 · 小闲'
@@ -246,49 +286,78 @@ export function ChatPage() {
     )
   }
 
+  const activeSession = sessions.find((session) => session.id === sessionId) ?? null
+  const sessionTitle = activeSession?.title || '新对话'
+
+  function startNewChat() {
+    setSessionId(null)
+    setMessages([])
+    setStreaming('')
+    setStreamingReasoning('')
+    setError('')
+  }
+
   return (
     <div {...stylex.props(styles.chatScreen)}>
-      <div {...stylex.props(styles.chatToolbar)}>
-        <Heading level={2}>和{profile.display_name}聊聊</Heading>
-        <Text type="supporting">
-          小闲会带上这张盘的机器排盘。问批盘或运势时，它按日主、十神、五行、格局、大运、流年来写；聊今天的事，就短一些。
-        </Text>
-        <Selector
-          label="档案"
-          options={profiles.map((item) => ({
-            value: item.id,
-            label: item.display_name,
-            description: formatBirth(item),
-          }))}
-          value={profile.id}
-          onChange={(value) => {
-            if (value && value !== profile.id) navigate(`/chat/${value}`)
-          }}
-        />
-        <div {...stylex.props(styles.sessionRow)}>
-          <Button
+      <div {...stylex.props(styles.chatTop)}>
+        <div {...stylex.props(styles.chatBar)} data-chat-toolbar>
+          <DropdownMenu
+            presentation={menuPresentation}
+            alignment="start"
+            menuWidth={280}
+            items={profiles.map((item) => ({
+              id: item.id,
+              label: item.display_name,
+              description: formatBirth(item),
+              endContent: item.id === profile.id ? <Icon icon="check" size="sm" /> : undefined,
+              onClick: () => {
+                if (item.id !== profile.id) navigate(`/chat/${item.id}`)
+              },
+            }))}
+            renderTrigger={(triggerProps) => (
+              <PickerTrigger
+                label={`切换档案，当前${profile.display_name}`}
+                text={profile.display_name}
+                pickerStyle={styles.chatPickerProfile}
+                triggerProps={triggerProps}
+                isDisabled={busy}
+              />
+            )}
+          />
+          <DropdownMenu
+            presentation={menuPresentation}
+            alignment="end"
+            menuWidth={280}
+            items={
+              sessions.length === 0
+                ? [{ id: 'empty', label: '还没有历史对话', isDisabled: true }]
+                : sessions.map((session) => ({
+                    id: session.id,
+                    label: session.title || '未命名',
+                    endContent: session.id === sessionId ? <Icon icon="check" size="sm" /> : undefined,
+                    isDisabled: busy,
+                    onClick: () => setSessionId(session.id),
+                  }))
+            }
+            renderTrigger={(triggerProps) => (
+              <PickerTrigger
+                label={`历史对话，当前${sessionTitle}`}
+                text={sessionTitle}
+                pickerStyle={styles.chatPickerSession}
+                triggerProps={triggerProps}
+                isDisabled={busy}
+              />
+            )}
+          />
+          <IconButton
             label="新对话"
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setSessionId(null)
-              setMessages([])
-              setStreaming('')
-              setStreamingReasoning('')
-              setError('')
-            }}
+            icon={<Icon icon={ComposeIcon} size="md" />}
+            variant="ghost"
+            size="lg"
+            xstyle={styles.chatNew}
+            onClick={startNewChat}
             isDisabled={busy}
           />
-          {sessions.map((session) => (
-            <Button
-              key={session.id}
-              label={session.title || '未命名'}
-              size="sm"
-              variant={session.id === sessionId ? 'primary' : 'ghost'}
-              onClick={() => setSessionId(session.id)}
-              isDisabled={busy}
-            />
-          ))}
         </div>
         {offline ? (
           <Banner
