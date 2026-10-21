@@ -10,7 +10,7 @@ import { VStack } from '@astryxdesign/core/VStack'
 import * as stylex from '@stylexjs/stylex'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { db } from '../db.ts'
+import { listProfiles, saveChart } from '../lib/store.ts'
 import { formatBirth, genderLabel } from '../lib/birth.ts'
 import { computeChart, currentDaYunLine, liuNianLine } from '../lib/chart.ts'
 import { nowIso } from '../lib/id.ts'
@@ -36,8 +36,8 @@ export function ChartPage() {
     async function load() {
       setStatus('loading')
       try {
-        const rows = await db.profiles.toArray()
-        rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+        const loaded = await listProfiles()
+        const rows = loaded.profiles
         if (cancelled) return
         setProfiles(rows)
         let targetId = id
@@ -61,7 +61,7 @@ export function ChartPage() {
         setChart(nextChart)
         setStatus('ready')
         await setLastProfileId(found.id)
-        await db.charts.put({
+        await saveChart({
           id: found.id,
           profile_id: found.id,
           computed_at: nowIso(),
@@ -80,7 +80,7 @@ export function ChartPage() {
     }
   }, [id, navigate])
 
-  if (status === 'loading') return <Text type="supporting">正在本地排盘…</Text>
+  if (status === 'loading') return <Text type="supporting">正在排盘…</Text>
 
   if (status === 'error') {
     return <EmptyState title="这次没排出来" description={message} />
@@ -100,7 +100,7 @@ export function ChartPage() {
     return (
       <EmptyState
         title="没有这份档案"
-        description="它可能已经从这台设备上删掉了。"
+        description="它可能已经从云端删掉了。"
         actions={<Button label="回到档案" variant="primary" onClick={() => navigate('/')} />}
       />
     )
@@ -109,7 +109,9 @@ export function ChartPage() {
   return (
     <VStack gap={4}>
       <HStack gap={3} align="center" justify="between" wrap="wrap">
-        <Heading level={2}>{profile.display_name}的四柱</Heading>
+        <Heading level={2} xstyle={styles.pageTitle}>
+          {profile.display_name}的四柱
+        </Heading>
         <Button label="拿去聊聊" variant="primary" onClick={() => navigate(`/chat/${profile.id}`)} />
       </HStack>
       <Selector
@@ -130,7 +132,7 @@ export function ChartPage() {
         description="干支可以当性格和节奏的比喻。健康、法律和重大财务决定，请找对应的专业人士。"
         collapsible={false}
       />
-      <Text type="supporting">
+      <Text type="supporting" xstyle={styles.pageLead}>
         {genderLabel(profile.gender)} · {formatBirth(profile)}
         {profile.birth_place ? ` · ${profile.birth_place}` : ''} · 农历 {chart.lunarText}
       </Text>
@@ -213,7 +215,7 @@ export function ChartPage() {
           </VStack>
         </Card>
       ) : null}
-      <Text type="supporting">命盘会缓存在这台设备上，下次打开仍按当天重算流年。</Text>
+      <Text type="supporting">排盘在这台设备上计算。档案存在云端，下次打开仍按当天重算流年。</Text>
     </VStack>
   )
 }

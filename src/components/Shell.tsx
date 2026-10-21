@@ -51,8 +51,12 @@ export function Shell() {
   return (
     <div {...stylex.props(styles.shell)}>
       <header {...stylex.props(styles.header)} data-app-header>
-        <Heading level={1}>小闲</Heading>
-        <Text type="supporting">给自己和朋友的一页对照</Text>
+        <Heading level={1} xstyle={styles.shellTitle}>
+          小闲
+        </Heading>
+        <Text type="supporting" xstyle={styles.shellTagline}>
+          给自己和朋友的一页对照
+        </Text>
       </header>
       <div {...stylex.props(styles.nav)}>
         <TabList

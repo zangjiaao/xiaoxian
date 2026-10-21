@@ -5,9 +5,10 @@ import { VStack } from '@astryxdesign/core/VStack'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ProfileForm, type ProfileDraft } from '../components/ProfileForm.tsx'
-import { db } from '../db.ts'
+import { getProfile, saveProfile } from '../lib/store.ts'
 import { createId, nowIso } from '../lib/id.ts'
 import { setLastProfileId } from '../lib/settings.ts'
+import { styles } from '../styles.ts'
 import type { Profile } from '../types.ts'
 
 export function ProfileFormPage() {
@@ -24,7 +25,7 @@ export function ProfileFormPage() {
   useEffect(() => {
     if (!id) return
     let cancelled = false
-    void db.profiles.get(id).then((row) => {
+    void getProfile(id).then((row) => {
       if (cancelled) return
       if (!row) {
         setStatus('missing')
@@ -46,7 +47,7 @@ export function ProfileFormPage() {
       created_at: profile?.created_at ?? timestamp,
       updated_at: timestamp,
     }
-    await db.profiles.put(next)
+    await saveProfile(next)
     await setLastProfileId(next.id)
     navigate(`/chart/${next.id}`)
   }
@@ -55,7 +56,9 @@ export function ProfileFormPage() {
   if (status === 'missing') {
     return (
       <VStack gap={3}>
-        <Heading level={2}>没有找到这份档案</Heading>
+        <Heading level={2} xstyle={styles.pageTitle}>
+          没有找到这份档案
+        </Heading>
         <Button label="回到档案" variant="primary" onClick={() => navigate('/')} />
       </VStack>
     )
@@ -63,8 +66,10 @@ export function ProfileFormPage() {
 
   return (
     <VStack gap={4}>
-      <Heading level={2}>{isEdit ? '编辑档案' : '新建档案'}</Heading>
-      <Text type="supporting">
+      <Heading level={2} xstyle={styles.pageTitle}>
+        {isEdit ? '编辑档案' : '新建档案'}
+      </Heading>
+      <Text type="supporting" xstyle={styles.pageLead}>
         时和分可以留空。空着就只排六字，并在命盘上标明时柱未知。
       </Text>
       <ProfileForm

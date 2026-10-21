@@ -2,26 +2,64 @@ import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Card } from '@astryxdesign/core/Card'
 import { Collapsible } from '@astryxdesign/core/Collapsible'
+import { DropdownMenu, type DropdownMenuTriggerProps } from '@astryxdesign/core/DropdownMenu'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
-import { Heading } from '@astryxdesign/core/Heading'
 import { HStack } from '@astryxdesign/core/HStack'
-import { Selector } from '@astryxdesign/core/Selector'
+import { Icon } from '@astryxdesign/core/Icon'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { VStack } from '@astryxdesign/core/VStack'
+import { useMediaQuery } from '@astryxdesign/core/hooks'
 import * as stylex from '@stylexjs/stylex'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { StyleXStyles } from '@stylexjs/stylex'
+import { useEffect, useLayoutEffect, useRef, useState, type SVGProps } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MarkdownText } from '../components/MarkdownText.tsx'
-import { db } from '../db.ts'
 import { formatBirth } from '../lib/birth.ts'
 import { computeChart } from '../lib/chart.ts'
 import { createId, nowIso } from '../lib/id.ts'
 import { streamChat } from '../lib/llm.ts'
 import { buildSystemPrompt } from '../lib/prompt.ts'
 import { getLastProfileId, getLlmSettings, setLastProfileId } from '../lib/settings.ts'
+import { listMessages, listProfiles, listSessions, saveMessage, saveSession } from '../lib/store.ts'
 import { styles } from '../styles.ts'
 import type { ChatMessage, ChatSession, Profile } from '../types.ts'
+
+function ComposeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true" {...props}>
+      <path strokeLinecap="round" d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+function PickerTrigger({
+  label,
+  text,
+  pickerStyle,
+  triggerProps,
+  isDisabled,
+}: {
+  label: string
+  text: string
+  pickerStyle: StyleXStyles
+  triggerProps: DropdownMenuTriggerProps
+  isDisabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      {...triggerProps}
+      aria-label={label}
+      disabled={isDisabled}
+      {...stylex.props(styles.chatPicker, pickerStyle)}
+    >
+      <span {...stylex.props(styles.chatPickerLabel)}>{text}</span>
+      <Icon icon="chevronDown" size="sm" />
+    </button>
+  )
+}
 
 export function ChatPage() {
   const { id } = useParams()
@@ -36,10 +74,12 @@ export function ChatPage() {
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [hasKey, setHasKey] = useState(true)
+  const [offline, setOffline] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading')
   const abortRef = useRef<AbortController | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const narrow = useMediaQuery('(max-width: 768px)')
+  const menuPresentation = narrow ? 'bottom-sheet' : 'popover'
 
   useEffect(() => {
     document.title = '聊聊 · 小闲'
@@ -59,12 +99,11 @@ export function ChatPage() {
     let cancelled = false
     async function load() {
       setStatus('loading')
-      const rows = await db.profiles.toArray()
-      rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+      const loaded = await listProfiles()
+      const rows = loaded.profiles
       if (cancelled) return
       setProfiles(rows)
-      const settings = await getLlmSettings()
-      if (!cancelled) setHasKey(Boolean(settings.apiKey))
+      setOffline(loaded.offline)
       let targetId = id
       if (!targetId) {
         const last = await getLastProfileId()
@@ -80,8 +119,7 @@ export function ChatPage() {
         setStatus(rows.length === 0 ? 'ready' : 'missing')
         return
       }
-      const nextSessions = await db.chat_sessions.where('profile_id').equals(found.id).toArray()
-      nextSessions.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+      const nextSessions = await listSessions(found.id)
       if (cancelled) return
       setProfile(found)
       setSessions(nextSessions)
@@ -104,15 +142,10 @@ export function ChatPage() {
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
-    void db.chat_messages
-      .where('session_id')
-      .equals(sessionId)
-      .toArray()
-      .then((rows) => {
-        if (cancelled) return
-        rows.sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-        setMessages(rows)
-      })
+    void listMessages(sessionId).then((rows) => {
+      if (cancelled) return
+      setMessages(rows)
+    })
     return () => {
       cancelled = true
     }
@@ -127,17 +160,11 @@ export function ChatPage() {
     setStreaming('')
     setStreamingReasoning('')
     const settings = await getLlmSettings()
-    if (!settings.apiKey) {
-      setHasKey(false)
-      setBusy(false)
-      setError('还没有 API Key。填好之后，这句话还在输入框里。')
-      return
-    }
-    setHasKey(true)
 
     const timestamp = nowIso()
     let activeSession = sessionId
-    if (!activeSession) {
+    let activeRecord = sessions.find((session) => session.id === activeSession) ?? null
+    if (!activeSession || !activeRecord) {
       const created: ChatSession = {
         id: createId(),
         profile_id: profile.id,
@@ -145,8 +172,9 @@ export function ChatPage() {
         created_at: timestamp,
         updated_at: timestamp,
       }
-      await db.chat_sessions.put(created)
+      await saveSession(created)
       activeSession = created.id
+      activeRecord = created
       setSessionId(created.id)
       setSessions((current) => [created, ...current])
     }
@@ -158,7 +186,7 @@ export function ChatPage() {
       content,
       created_at: timestamp,
     }
-    await db.chat_messages.put(userMessage)
+    await saveMessage(userMessage)
     const history = [...messages, userMessage]
     setMessages(history)
     setDraft('')
@@ -168,7 +196,7 @@ export function ChatPage() {
     abortRef.current = controller
     try {
       const reply = await streamChat({
-        settings,
+        model: settings.model === 'deepseek-reasoner' ? 'deepseek-reasoner' : 'deepseek-chat',
         signal: controller.signal,
         onDelta: (update) => {
           setStreaming(update.content)
@@ -196,11 +224,13 @@ export function ChatPage() {
         ...(thought ? { reasoning: thought } : {}),
         created_at: nowIso(),
       }
-      await db.chat_messages.put(assistant)
-      await db.chat_sessions.update(activeSession, {
+      await saveMessage(assistant)
+      const touched: ChatSession = {
+        ...activeRecord,
         updated_at: assistant.created_at,
-        title: sessions.find((session) => session.id === activeSession)?.title || content.slice(0, 18),
-      })
+        title: activeRecord.title || content.slice(0, 18),
+      }
+      await saveSession(touched)
       setMessages((current) => [...current, assistant])
       setStreaming('')
       setStreamingReasoning('')
@@ -256,57 +286,87 @@ export function ChatPage() {
     )
   }
 
+  const activeSession = sessions.find((session) => session.id === sessionId) ?? null
+  const sessionTitle = activeSession?.title || '新对话'
+
+  function startNewChat() {
+    setSessionId(null)
+    setMessages([])
+    setStreaming('')
+    setStreamingReasoning('')
+    setError('')
+  }
+
   return (
     <div {...stylex.props(styles.chatScreen)}>
-      <div {...stylex.props(styles.chatToolbar)}>
-        <Heading level={2}>和{profile.display_name}聊聊</Heading>
-        <Text type="supporting">
-          小闲会带上这张盘的机器排盘。问批盘或运势时，它按日主、十神、五行、格局、大运、流年来写；聊今天的事，就短一些。
-        </Text>
-        <Selector
-          label="档案"
-          options={profiles.map((item) => ({
-            value: item.id,
-            label: item.display_name,
-            description: formatBirth(item),
-          }))}
-          value={profile.id}
-          onChange={(value) => {
-            if (value && value !== profile.id) navigate(`/chat/${value}`)
-          }}
-        />
-        <div {...stylex.props(styles.sessionRow)}>
-          <Button
+      <div {...stylex.props(styles.chatTop)}>
+        <div {...stylex.props(styles.chatBar)} data-chat-toolbar>
+          <DropdownMenu
+            presentation={menuPresentation}
+            alignment="start"
+            menuWidth={280}
+            button={{ label: '切换档案' }}
+            items={profiles.map((item) => ({
+              id: item.id,
+              label: item.display_name,
+              description: formatBirth(item),
+              endContent: item.id === profile.id ? <Icon icon="check" size="sm" /> : undefined,
+              onClick: () => {
+                if (item.id !== profile.id) navigate(`/chat/${item.id}`)
+              },
+            }))}
+            renderTrigger={(triggerProps) => (
+              <PickerTrigger
+                label={`切换档案，当前${profile.display_name}`}
+                text={profile.display_name}
+                pickerStyle={styles.chatPickerProfile}
+                triggerProps={triggerProps}
+                isDisabled={busy}
+              />
+            )}
+          />
+          <DropdownMenu
+            presentation={menuPresentation}
+            alignment="end"
+            menuWidth={280}
+            button={{ label: '历史对话' }}
+            items={
+              sessions.length === 0
+                ? [{ id: 'empty', label: '还没有历史对话', isDisabled: true }]
+                : sessions.map((session) => ({
+                    id: session.id,
+                    label: session.title || '未命名',
+                    endContent: session.id === sessionId ? <Icon icon="check" size="sm" /> : undefined,
+                    isDisabled: busy,
+                    onClick: () => setSessionId(session.id),
+                  }))
+            }
+            renderTrigger={(triggerProps) => (
+              <PickerTrigger
+                label={`历史对话，当前${sessionTitle}`}
+                text={sessionTitle}
+                pickerStyle={styles.chatPickerSession}
+                triggerProps={triggerProps}
+                isDisabled={busy}
+              />
+            )}
+          />
+          <IconButton
             label="新对话"
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setSessionId(null)
-              setMessages([])
-              setStreaming('')
-              setStreamingReasoning('')
-              setError('')
-            }}
+            icon={<Icon icon={ComposeIcon} size="md" />}
+            variant="ghost"
+            size="lg"
+            xstyle={styles.chatNew}
+            onClick={startNewChat}
             isDisabled={busy}
           />
-          {sessions.map((session) => (
-            <Button
-              key={session.id}
-              label={session.title || '未命名'}
-              size="sm"
-              variant={session.id === sessionId ? 'primary' : 'ghost'}
-              onClick={() => setSessionId(session.id)}
-              isDisabled={busy}
-            />
-          ))}
         </div>
-        {!hasKey ? (
+        {offline ? (
           <Banner
             status="warning"
-            title="还没有模型密钥"
-            description="密钥只写进这台设备的浏览器，请求从这里直接发给 DeepSeek。"
+            title="云端暂时连不上"
+            description="对话记录先看这台设备上的缓存。发送需要网络。"
             collapsible={false}
-            endContent={<Button label="去设置" variant="primary" size="sm" onClick={() => navigate('/settings')} />}
           />
         ) : null}
       </div>
