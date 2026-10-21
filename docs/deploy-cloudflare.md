@@ -44,11 +44,11 @@ npx wrangler secret put DEEPSEEK_API_KEY
 | --- | --- |
 | `DEEPSEEK_MODEL` | 用户没选模型时的默认值，只能是 `deepseek-chat`（默认）或 `deepseek-reasoner` |
 | `DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com`。Worker 会请求 `{BASE}/chat/completions` |
-| `ACCESS_TEAM_DOMAIN` | `https://<团队名>.cloudflareaccess.com` |
-| `ACCESS_AUD` | Access 应用的 Audience (AUD) Tag |
+| `ACCESS_TEAM_DOMAIN` | `https://<团队名>.cloudflareaccess.com`。仓库里已填当前团队。若粘贴了证书地址，Worker 会去掉末尾斜杠和 `/cdn-cgi/access/certs` |
+| `ACCESS_AUD` | Access 应用的 Audience (AUD) Tag。仓库里已填当前应用 |
 | `DEV_USER_EMAIL` | 生产保持空字符串。只在本机 `localhost` / `127.0.0.1` 上跳过 JWT |
 
-`ACCESS_TEAM_DOMAIN` 和 `ACCESS_AUD` 等第 5 步拿到后再填。留空时，线上请求会返回 401。
+`ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD` 留空时，线上请求会返回 401。
 
 本地开发把覆盖项放在 `.dev.vars`（已 gitignore），可以照 `.dev.vars.example` 复制：
 
@@ -103,9 +103,9 @@ npm run cf:dev
 记下两个值，写回 `wrangler.jsonc` 的 `vars`，再 `npm run deploy` 一次：
 
 - **AUD**：打开这个应用的详情 / Overview，复制 **Application Audience (AUD) Tag**，填到 `ACCESS_AUD`。
-- **团队域名**：Zero Trust → **Settings** → **Team name and domain**。团队名是 `<team>` 时，`ACCESS_TEAM_DOMAIN` 填 `https://<team>.cloudflareaccess.com`。证书地址是 `{团队域名}/cdn-cgi/access/certs`，Worker 会自己去取，不用另配。
+- **团队域名**：Zero Trust → **Settings** → **Team name and domain**。团队名是 `<team>` 时，`ACCESS_TEAM_DOMAIN` 填 `https://<team>.cloudflareaccess.com`。证书地址是 `{团队域名}/cdn-cgi/access/certs`，Worker 会自己去取。把证书地址整段贴进来也可以，末尾斜杠和这段路径会被去掉。JWT 的 `iss` 只比对不带路径的团队源站。
 
-Worker 校验请求头 `Cf-Access-Jwt-Assertion`：签名必须对上团队证书，`iss` 是团队域名，`aud` 包含这个 AUD，并且令牌里有邮箱。邮箱就是用户 id。校验失败返回 401。
+Worker 校验请求头 `Cf-Access-Jwt-Assertion`：签名必须对上团队证书，`iss` 是不带路径的团队源站，`aud` 包含这个 AUD，并且令牌里有邮箱。邮箱就是用户 id。校验失败返回 401。
 
 Access 挡住的是浏览器入口。Worker 再验一次 JWT，避免有人绕过页面直接打 API。
 

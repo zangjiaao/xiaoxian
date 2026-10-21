@@ -42,6 +42,28 @@ const email = await emailFromAccessJwt(await sign({ email: 'Friend@Example.com' 
 })
 assert.equal(email, 'friend@example.com')
 assert.equal(accessIssuer('https://team.cloudflareaccess.com/'), issuer)
+assert.equal(
+  accessIssuer('https://delicate-bread-c32c.cloudflareaccess.com/cdn-cgi/access/certs/'),
+  'https://delicate-bread-c32c.cloudflareaccess.com',
+)
+const pastedCerts = 'https://delicate-bread-c32c.cloudflareaccess.com/cdn-cgi/access/certs'
+assert.equal(
+  await emailFromAccessJwt(await sign({ email: 'a@b.co' }, { iss: accessIssuer(pastedCerts) }), {
+    teamDomain: pastedCerts,
+    aud: 'aud-1',
+    getKey,
+  }),
+  'a@b.co',
+)
+await assert.rejects(
+  async () =>
+    emailFromAccessJwt(await sign({ email: 'a@b.co' }, { iss: pastedCerts }), {
+      teamDomain: pastedCerts,
+      aud: 'aud-1',
+      getKey,
+    }),
+  /unexpected "iss" claim/i,
+)
 
 await assert.rejects(
   async () => emailFromAccessJwt(await sign({ email: 'friend@example.com' }), { teamDomain: issuer, aud: 'other', getKey }),

@@ -3,10 +3,13 @@ import { jsonError } from './http.ts'
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const CERTS_SUFFIX = /\/cdn-cgi\/access\/certs$/i
 const jwksByIssuer = new Map<string, JWTVerifyGetKey>()
 
+// 只返回团队源站。JWT iss 用它，证书地址是 `{源站}/cdn-cgi/access/certs`。
 export function accessIssuer(teamDomain: string): string {
-  const trimmed = teamDomain.trim().replace(/\/+$/, '')
+  let trimmed = teamDomain.trim().replace(/\/+$/, '')
+  trimmed = trimmed.replace(CERTS_SUFFIX, '').replace(/\/+$/, '')
   if (!trimmed) throw new Error('missing team domain')
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
   const url = new URL(withScheme)
