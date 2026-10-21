@@ -13,18 +13,23 @@ import { VStack } from '@astryxdesign/core/VStack'
 import { useMediaQuery } from '@astryxdesign/core/hooks'
 import * as stylex from '@stylexjs/stylex'
 import type { StyleXStyles } from '@stylexjs/stylex'
-import { useEffect, useLayoutEffect, useRef, useState, type SVGProps } from 'react'
+import { useEffect, useLayoutEffect, useRef, type SVGProps } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MarkdownText } from '../components/MarkdownText.tsx'
 import { formatBirth } from '../lib/birth.ts'
-import { computeChart } from '../lib/chart.ts'
-import { createId, nowIso } from '../lib/id.ts'
-import { streamChat } from '../lib/llm.ts'
-import { buildSystemPrompt } from '../lib/prompt.ts'
-import { getLastProfileId, getLlmSettings, setLastProfileId } from '../lib/settings.ts'
-import { listMessages, listProfiles, listSessions, saveMessage, saveSession } from '../lib/store.ts'
+import {
+  focusProfile,
+  readScroll,
+  rememberScroll,
+  selectSession,
+  sendChat,
+  startNewChat,
+  stopStream,
+  updateDraft,
+  useMemorySelector,
+  warmCache,
+} from '../lib/memory.ts'
 import { styles } from '../styles.ts'
-import type { ChatMessage, ChatSession, Profile } from '../types.ts'
 
 function ComposeIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -61,213 +66,89 @@ function PickerTrigger({
   )
 }
 
+function distanceFromBottom(list: HTMLDivElement): number {
+  return list.scrollHeight - list.scrollTop - list.clientHeight
+}
+
 export function ChatPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [profiles, setProfiles] = useState<Profile[]>([])
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [draft, setDraft] = useState('')
-  const [streaming, setStreaming] = useState('')
-  const [streamingReasoning, setStreamingReasoning] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [offline, setOffline] = useState(false)
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading')
-  const abortRef = useRef<AbortController | null>(null)
+  const booted = useMemorySelector((state) => state.booted)
+  const profiles = useMemorySelector((state) => state.profiles)
+  const profilesStatus = useMemorySelector((state) => state.profilesStatus)
+  const lastProfileId = useMemorySelector((state) => state.settings?.lastProfileId ?? null)
+  const offline = useMemorySelector((state) => state.offline)
+  const sessions = useMemorySelector((state) => (id ? state.sessions[id] : undefined))
+  const sessionsStatus = useMemorySelector((state) => (id ? state.sessionsStatus[id] : undefined))
+  const sessionChoice = useMemorySelector((state) => (id ? state.chat.sessionByProfile[id] : undefined))
+  const messages = useMemorySelector((state) =>
+    sessionChoice ? state.messages[sessionChoice] : undefined,
+  )
+  const draft = useMemorySelector((state) => (id ? (state.chat.draftByProfile[id] ?? '') : ''))
+  const error = useMemorySelector((state) => state.chat.error)
+  const stream = useMemorySelector((state) => state.stream)
+  const profile = profiles?.find((item) => item.id === id) ?? null
+  const busy = Boolean(stream?.busy)
+  const showStream = Boolean(
+    stream && sessionChoice && stream.sessionId === sessionChoice && (stream.busy || stream.content || stream.reasoning),
+  )
   const listRef = useRef<HTMLDivElement | null>(null)
+  const appliedScrollKey = useRef<string | null>(null)
+  const sticking = useRef(false)
   const narrow = useMediaQuery('(max-width: 768px)')
   const menuPresentation = narrow ? 'bottom-sheet' : 'popover'
+  const scrollKey = sessionChoice ? sessionChoice : id ? `new:${id}` : ''
 
   useEffect(() => {
     document.title = '聊聊 · 小闲'
+    void warmCache()
   }, [])
 
   useEffect(() => {
-    return () => abortRef.current?.abort()
-  }, [])
+    if (id || profilesStatus !== 'ready' || !profiles || profiles.length === 0) return
+    const target = profiles.find((item) => item.id === lastProfileId)?.id ?? profiles[0]?.id
+    if (target) navigate(`/chat/${target}`, { replace: true })
+  }, [id, lastProfileId, navigate, profiles, profilesStatus])
+
+  useEffect(() => {
+    if (!id || !profile) return
+    focusProfile(id)
+  }, [id, profile])
 
   useLayoutEffect(() => {
     const list = listRef.current
-    if (!list) return
-    list.scrollTop = list.scrollHeight
-  }, [messages, streaming, streamingReasoning, busy, sessionId])
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setStatus('loading')
-      const loaded = await listProfiles()
-      const rows = loaded.profiles
-      if (cancelled) return
-      setProfiles(rows)
-      setOffline(loaded.offline)
-      let targetId = id
-      if (!targetId) {
-        const last = await getLastProfileId()
-        targetId = rows.find((row) => row.id === last)?.id ?? rows[0]?.id
-        if (targetId) {
-          navigate(`/chat/${targetId}`, { replace: true })
-          return
-        }
-      }
-      const found = rows.find((row) => row.id === targetId) ?? null
-      if (!found) {
-        setProfile(null)
-        setStatus(rows.length === 0 ? 'ready' : 'missing')
-        return
-      }
-      const nextSessions = await listSessions(found.id)
-      if (cancelled) return
-      setProfile(found)
-      setSessions(nextSessions)
-      setSessionId(nextSessions[0]?.id ?? null)
-      if (nextSessions.length === 0) setMessages([])
-      setStatus('ready')
-      await setLastProfileId(found.id)
-    }
-    void load().catch((loadError: unknown) => {
-      if (!cancelled) {
-        setError(loadError instanceof Error ? loadError.message : '对话页打不开。')
-        setStatus('ready')
-      }
+    if (!list || !scrollKey) return
+    const saved = readScroll(scrollKey)
+    const entered = appliedScrollKey.current !== scrollKey
+    appliedScrollKey.current = scrollKey
+    const follow = entered ? saved.followBottom : readScroll(scrollKey).followBottom
+    if (!entered && !follow) return
+    sticking.current = true
+    list.scrollTop = follow ? list.scrollHeight : saved.top
+    rememberScroll(scrollKey, list.scrollTop, Boolean(follow))
+    requestAnimationFrame(() => {
+      sticking.current = false
     })
-    return () => {
-      cancelled = true
-    }
-  }, [id, navigate])
+  }, [messages, scrollKey, stream?.content, stream?.reasoning, showStream])
 
-  useEffect(() => {
-    if (!sessionId) return
-    let cancelled = false
-    void listMessages(sessionId).then((rows) => {
-      if (cancelled) return
-      setMessages(rows)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [sessionId])
-
-  async function send() {
-    if (!profile || busy) return
-    const content = draft.trim()
-    if (!content) return
-    setError('')
-    setBusy(true)
-    setStreaming('')
-    setStreamingReasoning('')
-    const settings = await getLlmSettings()
-
-    const timestamp = nowIso()
-    let activeSession = sessionId
-    let activeRecord = sessions.find((session) => session.id === activeSession) ?? null
-    if (!activeSession || !activeRecord) {
-      const created: ChatSession = {
-        id: createId(),
-        profile_id: profile.id,
-        title: content.slice(0, 18),
-        created_at: timestamp,
-        updated_at: timestamp,
-      }
-      await saveSession(created)
-      activeSession = created.id
-      activeRecord = created
-      setSessionId(created.id)
-      setSessions((current) => [created, ...current])
-    }
-
-    const userMessage: ChatMessage = {
-      id: createId(),
-      session_id: activeSession,
-      role: 'user',
-      content,
-      created_at: timestamp,
-    }
-    await saveMessage(userMessage)
-    const history = [...messages, userMessage]
-    setMessages(history)
-    setDraft('')
-
-    const chart = computeChart(profile)
-    const controller = new AbortController()
-    abortRef.current = controller
-    try {
-      const reply = await streamChat({
-        model: settings.model === 'deepseek-reasoner' ? 'deepseek-reasoner' : 'deepseek-chat',
-        signal: controller.signal,
-        onDelta: (update) => {
-          setStreaming(update.content)
-          setStreamingReasoning(update.reasoning)
-        },
-        messages: [
-          { role: 'system', content: buildSystemPrompt(profile, chart) },
-          ...history.slice(-40).map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-        ],
-      })
-      const text = reply.content.trim()
-      const thought = reply.reasoning.trim()
-      if (!text) {
-        setError('这次没有生成内容，可以换种说法再试。')
-        return
-      }
-      const assistant: ChatMessage = {
-        id: createId(),
-        session_id: activeSession,
-        role: 'assistant',
-        content: text,
-        ...(thought ? { reasoning: thought } : {}),
-        created_at: nowIso(),
-      }
-      await saveMessage(assistant)
-      const touched: ChatSession = {
-        ...activeRecord,
-        updated_at: assistant.created_at,
-        title: activeRecord.title || content.slice(0, 18),
-      }
-      await saveSession(touched)
-      setMessages((current) => [...current, assistant])
-      setStreaming('')
-      setStreamingReasoning('')
-      setSessions((current) =>
-        current
-          .map((session) =>
-            session.id === activeSession ? { ...session, updated_at: assistant.created_at } : session,
-          )
-          .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
-      )
-    } catch (sendError) {
-      if (sendError instanceof DOMException && sendError.name === 'AbortError') {
-        setError('已停下来。')
-        return
-      }
-      setError(sendError instanceof Error ? sendError.message : '聊天没有完成。')
-    } finally {
-      setBusy(false)
-      abortRef.current = null
-    }
+  function onMessagesScroll() {
+    if (sticking.current) return
+    const list = listRef.current
+    if (!list || !scrollKey) return
+    rememberScroll(scrollKey, list.scrollTop, distanceFromBottom(list) < 64)
   }
 
-  function Thought({ text, open = false }: { text: string; open?: boolean }) {
-    return (
-      <Collapsible defaultIsOpen={open} trigger={<Text type="supporting">思考过程</Text>}>
-        <MarkdownText text={text} tone="secondary" />
-      </Collapsible>
-    )
+  if (!booted && !profile && !profiles) return null
+
+  if ((profilesStatus !== 'ready' || !profiles) && !profile) {
+    return <Text type="supporting">正在准备对话…</Text>
   }
 
-  function stop() {
-    abortRef.current?.abort()
+  if (profilesStatus === 'error' && !profile) {
+    return <EmptyState title="对话页打不开" description={error || '云端暂时没有回应。'} />
   }
 
-  if (status === 'loading') return <Text type="supporting">正在准备对话…</Text>
-
-  if (profiles.length === 0) {
+  if (!profiles || profiles.length === 0) {
     return (
       <EmptyState
         title="先有一个档案，再聊"
@@ -277,7 +158,8 @@ export function ChatPage() {
     )
   }
 
-  if (!profile || status === 'missing') {
+  if (!id || !profile) {
+    if (!id || profilesStatus !== 'ready') return <Text type="supporting">正在准备对话…</Text>
     return (
       <EmptyState
         title="没有这份档案"
@@ -286,16 +168,24 @@ export function ChatPage() {
     )
   }
 
-  const activeSession = sessions.find((session) => session.id === sessionId) ?? null
-  const sessionTitle = activeSession?.title || '新对话'
-
-  function startNewChat() {
-    setSessionId(null)
-    setMessages([])
-    setStreaming('')
-    setStreamingReasoning('')
-    setError('')
+  if (sessionsStatus === 'error' && !sessions) {
+    return (
+      <EmptyState
+        title="对话页打不开"
+        description={error || '云端暂时没有回应。'}
+        actions={<Button label="回到档案" variant="primary" onClick={() => navigate('/')} />}
+      />
+    )
   }
+
+  if (!sessions || sessionChoice === undefined) {
+    return <Text type="supporting">正在准备对话…</Text>
+  }
+
+  const activeSession = sessions.find((session) => session.id === sessionChoice) ?? null
+  const sessionTitle = activeSession?.title || '新对话'
+  const visibleMessages = sessionChoice ? (messages ?? []) : []
+  const waitingForMessages = Boolean(sessionChoice && !messages && !showStream)
 
   return (
     <div {...stylex.props(styles.chatScreen)}>
@@ -336,9 +226,9 @@ export function ChatPage() {
                 : sessions.map((session) => ({
                     id: session.id,
                     label: session.title || '未命名',
-                    endContent: session.id === sessionId ? <Icon icon="check" size="sm" /> : undefined,
+                    endContent: session.id === sessionChoice ? <Icon icon="check" size="sm" /> : undefined,
                     isDisabled: busy,
-                    onClick: () => setSessionId(session.id),
+                    onClick: () => selectSession(session.id),
                   }))
             }
             renderTrigger={(triggerProps) => (
@@ -370,11 +260,12 @@ export function ChatPage() {
           />
         ) : null}
       </div>
-      <div ref={listRef} {...stylex.props(styles.messages)} data-chat-messages>
-        {messages.length === 0 && !streaming ? (
+      <div ref={listRef} {...stylex.props(styles.messages)} data-chat-messages onScroll={onMessagesScroll}>
+        {waitingForMessages ? <Text type="supporting">正在准备对话…</Text> : null}
+        {!waitingForMessages && visibleMessages.length === 0 && !showStream ? (
           <Text type="supporting">比如：今天开会有点顶，我想看看这更像性格，还是只是没睡够。</Text>
         ) : null}
-        {messages.map((message) => (
+        {visibleMessages.map((message) => (
           <Card
             key={message.id}
             padding={3}
@@ -392,12 +283,16 @@ export function ChatPage() {
             </VStack>
           </Card>
         ))}
-        {busy || streaming || streamingReasoning ? (
+        {showStream && stream ? (
           <Card padding={3} xstyle={styles.bubbleAssistant}>
             <VStack gap={1}>
               <Text type="supporting">小闲</Text>
-              {streamingReasoning ? <Thought text={streamingReasoning} open /> : null}
-              {streaming ? <MarkdownText text={streaming} /> : <Text {...stylex.props(styles.prose)}>在想怎么说…</Text>}
+              {stream.reasoning ? <Thought text={stream.reasoning} open /> : null}
+              {stream.content ? (
+                <MarkdownText text={stream.content} />
+              ) : (
+                <Text {...stylex.props(styles.prose)}>在想怎么说…</Text>
+              )}
             </VStack>
           </Card>
         ) : null}
@@ -407,18 +302,20 @@ export function ChatPage() {
         <TextArea
           label="今天想聊的"
           value={draft}
-          onChange={setDraft}
+          onChange={(value) => updateDraft(profile.id, value)}
           rows={3}
           placeholder="写一件具体的事，比问「我今年运气如何」更有用。"
           isDisabled={busy}
           onFocus={() => {
             const list = listRef.current
-            if (list) list.scrollTop = list.scrollHeight
+            if (!list || !scrollKey) return
+            list.scrollTop = list.scrollHeight
+            rememberScroll(scrollKey, list.scrollTop, true)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
-              void send()
+              void sendChat(profile)
             }
           }}
         />
@@ -426,12 +323,20 @@ export function ChatPage() {
           <Button
             label={busy ? '正在回复' : '发送'}
             variant="primary"
-            onClick={() => void send()}
+            onClick={() => void sendChat(profile)}
             isDisabled={busy || draft.trim().length === 0}
           />
-          {busy ? <Button label="停止" variant="secondary" onClick={stop} /> : null}
+          {busy ? <Button label="停止" variant="secondary" onClick={stopStream} /> : null}
         </HStack>
       </div>
     </div>
+  )
+}
+
+function Thought({ text, open = false }: { text: string; open?: boolean }) {
+  return (
+    <Collapsible defaultIsOpen={open} trigger={<Text type="supporting">思考过程</Text>}>
+      <MarkdownText text={text} tone="secondary" />
+    </Collapsible>
   )
 }

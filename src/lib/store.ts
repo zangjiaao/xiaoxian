@@ -42,8 +42,27 @@ type LegacyStatus = 'empty' | 'pending' | 'dismissed' | 'done'
 let legacyReady: Promise<void> | null = null
 let settingsCache: Promise<AppSettings> | null = null
 
-function sortProfiles(rows: Profile[]): Profile[] {
+export function sortProfiles(rows: Profile[]): Profile[] {
   return rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+}
+
+export function sortSessions(rows: ChatSession[]): ChatSession[] {
+  return rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+}
+
+export function sortMessages(rows: ChatMessage[]): ChatMessage[] {
+  return rows.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+}
+
+let dbTail: Promise<void> = Promise.resolve()
+
+export function enqueueDb<T>(task: () => Promise<T>): Promise<T> {
+  const run = dbTail.then(task, task)
+  dbTail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
 }
 
 async function readStatus(): Promise<LegacyStatus | null> {
@@ -160,7 +179,7 @@ async function cachedSettings(): Promise<AppSettings> {
   }
 }
 
-async function rememberSettings(settings: AppSettings): Promise<void> {
+export async function persistSettings(settings: AppSettings): Promise<void> {
   await db.settings.put({ key: 'llm', value_json: JSON.stringify({ model: settings.model }) })
   if (settings.lastProfileId) {
     await db.settings.put({ key: 'lastProfileId', value_json: JSON.stringify(settings.lastProfileId) })
@@ -185,7 +204,7 @@ async function fetchSettings(): Promise<AppSettings> {
       lastProfileId: remote.lastProfileId,
       offline: false,
     }
-    await rememberSettings(settings)
+    await persistSettings(settings)
     return settings
   } catch (error) {
     if (!isOffline(error)) throw error
@@ -200,12 +219,11 @@ export function invalidateSettings(): void {
 export async function saveModel(model: LlmModel): Promise<void> {
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ model }) })
   invalidateSettings()
-  await loadAppSettings()
 }
 
 export async function setLastProfileId(id: string): Promise<void> {
   await prepareLegacy()
-  await db.settings.put({ key: 'lastProfileId', value_json: JSON.stringify(id) })
+  await enqueueDb(() => db.settings.put({ key: 'lastProfileId', value_json: JSON.stringify(id) }))
   try {
     await api('/api/settings', { method: 'PUT', body: JSON.stringify({ lastProfileId: id }) })
     invalidateSettings()
@@ -215,50 +233,82 @@ export async function setLastProfileId(id: string): Promise<void> {
   }
 }
 
-export async function listProfiles(): Promise<{ profiles: Profile[]; offline: boolean }> {
+export async function readLocalProfiles(): Promise<Profile[]> {
   await prepareLegacy()
+  return sortProfiles(await db.profiles.toArray())
+}
+
+export async function pullProfiles(): Promise<Profile[]> {
+  await prepareLegacy()
+  const profiles = sortProfiles(await api<Profile[]>('/api/profiles'))
+  await enqueueDb(() =>
+    db.transaction('rw', db.profiles, db.settings, async () => {
+      await db.profiles.clear()
+      if (profiles.length > 0) await db.profiles.bulkPut(profiles)
+      await addSyncMarkUnlocked('profiles')
+    }),
+  )
+  return profiles
+}
+
+export async function listProfiles(): Promise<{ profiles: Profile[]; offline: boolean }> {
   try {
-    const profiles = sortProfiles(await api<Profile[]>('/api/profiles'))
-    await db.profiles.clear()
-    if (profiles.length > 0) await db.profiles.bulkPut(profiles)
-    return { profiles, offline: false }
+    return { profiles: await pullProfiles(), offline: false }
   } catch (error) {
     if (!isOffline(error)) throw error
-    return { profiles: sortProfiles(await db.profiles.toArray()), offline: true }
+    return { profiles: await readLocalProfiles(), offline: true }
+  }
+}
+
+export async function readLocalProfile(id: string): Promise<Profile | null> {
+  await prepareLegacy()
+  return (await db.profiles.get(id)) ?? null
+}
+
+export async function pullProfile(id: string): Promise<Profile | null> {
+  await prepareLegacy()
+  try {
+    const profile = await api<Profile>(`/api/profiles/${id}`)
+    await enqueueDb(() => db.profiles.put(profile))
+    return profile
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
   }
 }
 
 export async function getProfile(id: string): Promise<Profile | null> {
-  await prepareLegacy()
   try {
-    const profile = await api<Profile>(`/api/profiles/${id}`)
-    await db.profiles.put(profile)
-    return profile
+    return await pullProfile(id)
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return null
     if (!isOffline(error)) throw error
-    return (await db.profiles.get(id)) ?? null
+    return readLocalProfile(id)
   }
 }
 
-export async function saveProfile(profile: Profile): Promise<void> {
+export async function saveProfile(profile: Profile): Promise<Profile> {
   await prepareLegacy()
   const saved = await api<Profile>(`/api/profiles/${profile.id}`, {
     method: 'PUT',
     body: JSON.stringify(profile),
   })
-  await db.profiles.put(saved)
+  await enqueueDb(() => db.profiles.put(saved))
+  return saved
 }
 
 export async function removeProfile(id: string): Promise<void> {
   await prepareLegacy()
-  await api(`/api/profiles/${id}`, { method: 'DELETE' })
-  await deleteLocalProfile(id)
+  try {
+    await api(`/api/profiles/${id}`, { method: 'DELETE' })
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) throw error
+  }
+  await enqueueDb(() => deleteLocalProfile(id))
 }
 
 export async function saveChart(chart: ChartCache): Promise<void> {
   await prepareLegacy()
-  await db.charts.put(chart)
+  await enqueueDb(() => db.charts.put(chart))
   try {
     await api(`/api/charts/${chart.id}`, { method: 'PUT', body: JSON.stringify(chart) })
   } catch (error) {
@@ -266,56 +316,219 @@ export async function saveChart(chart: ChartCache): Promise<void> {
   }
 }
 
-export async function listSessions(profileId: string): Promise<ChatSession[]> {
+export async function readLocalCharts(): Promise<ChartCache[]> {
   await prepareLegacy()
-  try {
-    const sessions = await api<ChatSession[]>(`/api/sessions?profile_id=${encodeURIComponent(profileId)}`)
-    await db.transaction('rw', db.chat_sessions, async () => {
+  return db.charts.toArray()
+}
+
+export async function readLocalSessions(profileId: string): Promise<ChatSession[]> {
+  await prepareLegacy()
+  const rows = await db.chat_sessions.where('profile_id').equals(profileId).toArray()
+  return sortSessions(rows)
+}
+
+export async function pullSessions(profileId: string): Promise<ChatSession[]> {
+  await prepareLegacy()
+  const sessions = await api<ChatSession[]>(`/api/sessions?profile_id=${encodeURIComponent(profileId)}`)
+  await enqueueDb(() =>
+    db.transaction('rw', db.chat_sessions, db.settings, async () => {
       await db.chat_sessions.where('profile_id').equals(profileId).delete()
       if (sessions.length > 0) await db.chat_sessions.bulkPut(sessions)
-    })
-    return sessions
+      await addSyncMarkUnlocked(`sessions:${profileId}`)
+    }),
+  )
+  return sessions
+}
+
+export async function listSessions(profileId: string): Promise<ChatSession[]> {
+  try {
+    return await pullSessions(profileId)
   } catch (error) {
     if (!isOffline(error)) throw error
-    const rows = await db.chat_sessions.where('profile_id').equals(profileId).toArray()
-    rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
-    return rows
+    return readLocalSessions(profileId)
   }
 }
 
-export async function saveSession(session: ChatSession): Promise<void> {
+export async function saveSession(session: ChatSession): Promise<ChatSession> {
   await prepareLegacy()
   const saved = await api<ChatSession>(`/api/sessions/${session.id}`, {
     method: 'PUT',
     body: JSON.stringify(session),
   })
-  await db.chat_sessions.put(saved)
+  await enqueueDb(() => db.chat_sessions.put(saved))
+  return saved
+}
+
+export async function readLocalMessages(sessionId: string): Promise<ChatMessage[]> {
+  await prepareLegacy()
+  const rows = await db.chat_messages.where('session_id').equals(sessionId).toArray()
+  return sortMessages(rows)
+}
+
+export async function pullMessages(sessionId: string): Promise<ChatMessage[]> {
+  await prepareLegacy()
+  const messages = await api<ChatMessage[]>(`/api/sessions/${sessionId}/messages`)
+  await enqueueDb(() =>
+    db.transaction('rw', db.chat_messages, db.settings, async () => {
+      await db.chat_messages.where('session_id').equals(sessionId).delete()
+      if (messages.length > 0) await db.chat_messages.bulkPut(messages)
+      await addSyncMarkUnlocked(`messages:${sessionId}`)
+    }),
+  )
+  return messages
 }
 
 export async function listMessages(sessionId: string): Promise<ChatMessage[]> {
-  await prepareLegacy()
   try {
-    const messages = await api<ChatMessage[]>(`/api/sessions/${sessionId}/messages`)
-    await db.transaction('rw', db.chat_messages, async () => {
-      await db.chat_messages.where('session_id').equals(sessionId).delete()
-      if (messages.length > 0) await db.chat_messages.bulkPut(messages)
-    })
-    return messages
+    return await pullMessages(sessionId)
   } catch (error) {
     if (!isOffline(error)) throw error
-    const rows = await db.chat_messages.where('session_id').equals(sessionId).toArray()
-    rows.sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-    return rows
+    return readLocalMessages(sessionId)
   }
 }
 
-export async function saveMessage(message: ChatMessage): Promise<void> {
+export async function saveMessage(message: ChatMessage): Promise<ChatMessage> {
   await prepareLegacy()
   const saved = await api<ChatMessage>(`/api/sessions/${message.session_id}/messages/${message.id}`, {
     method: 'PUT',
     body: JSON.stringify(message),
   })
-  await db.chat_messages.put(saved)
+  await enqueueDb(() => db.chat_messages.put(saved))
+  return saved
+}
+
+export interface PendingBundle {
+  profiles: Profile[]
+  sessions: ChatSession[]
+  messages: ChatMessage[]
+}
+
+const PENDING_KEY = 'pendingWrites'
+const SYNC_KEY = 'syncMarks'
+
+function emptyPending(): PendingBundle {
+  return { profiles: [], sessions: [], messages: [] }
+}
+
+export async function readPendingBundle(): Promise<PendingBundle> {
+  await prepareLegacy()
+  const row = await db.settings.get(PENDING_KEY)
+  if (!row) return emptyPending()
+  try {
+    const parsed = JSON.parse(row.value_json) as Partial<PendingBundle>
+    return {
+      profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+    }
+  } catch {
+    return emptyPending()
+  }
+}
+
+export async function writePendingBundle(bundle: PendingBundle): Promise<void> {
+  await prepareLegacy()
+  await enqueueDb(async () => {
+    if (bundle.profiles.length === 0 && bundle.sessions.length === 0 && bundle.messages.length === 0) {
+      await db.settings.delete(PENDING_KEY)
+      return
+    }
+    await db.settings.put({ key: PENDING_KEY, value_json: JSON.stringify(bundle) })
+  })
+}
+
+export async function readSyncMarks(): Promise<Set<string>> {
+  await prepareLegacy()
+  const row = await db.settings.get(SYNC_KEY)
+  if (!row) return new Set()
+  try {
+    const parsed = JSON.parse(row.value_json) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((item): item is string => typeof item === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
+async function addSyncMarkUnlocked(mark: string): Promise<void> {
+  const row = await db.settings.get(SYNC_KEY)
+  const marks = new Set<string>()
+  if (row) {
+    try {
+      const parsed = JSON.parse(row.value_json) as unknown
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === 'string') marks.add(item)
+        }
+      }
+    } catch {
+      marks.clear()
+    }
+  }
+  marks.add(mark)
+  await db.settings.put({ key: SYNC_KEY, value_json: JSON.stringify([...marks]) })
+}
+
+export async function putProfileLocal(profile: Profile): Promise<void> {
+  await prepareLegacy()
+  await enqueueDb(() => db.profiles.put(profile))
+}
+
+export async function putSessionLocal(session: ChatSession): Promise<void> {
+  await prepareLegacy()
+  await enqueueDb(() => db.chat_sessions.put(session))
+}
+
+export async function putMessageLocal(message: ChatMessage): Promise<void> {
+  await prepareLegacy()
+  await enqueueDb(() => db.chat_messages.put(message))
+}
+
+export async function putProfilesLocal(profiles: Profile[]): Promise<void> {
+  if (profiles.length === 0) return
+  await prepareLegacy()
+  await enqueueDb(() => db.profiles.bulkPut(profiles))
+}
+
+export async function putSessionsLocal(sessions: ChatSession[]): Promise<void> {
+  if (sessions.length === 0) return
+  await prepareLegacy()
+  await enqueueDb(() => db.chat_sessions.bulkPut(sessions))
+}
+
+export async function putMessagesLocal(messages: ChatMessage[]): Promise<void> {
+  if (messages.length === 0) return
+  await prepareLegacy()
+  await enqueueDb(() => db.chat_messages.bulkPut(messages))
+}
+
+export async function clearAccountCache(): Promise<void> {
+  await prepareLegacy()
+  await enqueueDb(() =>
+    db.transaction('rw', db.profiles, db.charts, db.chat_sessions, db.chat_messages, db.settings, async () => {
+      await db.profiles.clear()
+      await db.charts.clear()
+      await db.chat_sessions.clear()
+      await db.chat_messages.clear()
+      await db.settings.delete(PENDING_KEY)
+      await db.settings.delete(SYNC_KEY)
+      await db.settings.delete('lastProfileId')
+    }),
+  )
+}
+
+export async function fetchRemoteSettings(): Promise<AppSettings> {
+  const remote = await api<{ email: string; model: string; lastProfileId: string | null }>('/api/settings')
+  return {
+    email: remote.email,
+    model: isLlmModel(remote.model) ? remote.model : DEFAULT_MODEL,
+    lastProfileId: remote.lastProfileId,
+    offline: false,
+  }
+}
+
+export async function readLocalSettings(): Promise<AppSettings> {
+  return cachedSettings()
 }
 
 function publicLlm(valueJson: string): string {

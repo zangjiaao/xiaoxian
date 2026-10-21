@@ -1,8 +1,16 @@
 import type { LlmSettings } from '../types.ts'
+import { getSnapshot, rememberLastProfile, saveModelOptimistic, warmCache } from './memory.ts'
 import { DEFAULT_MODEL, isLlmModel, type LlmModel } from './models.ts'
-import { loadAppSettings, saveModel, setLastProfileId as persistLastProfileId } from './store.ts'
+import { loadAppSettings as loadStoredSettings, type AppSettings } from './store.ts'
 
 export const DEFAULT_LLM: LlmSettings = { model: DEFAULT_MODEL }
+
+export async function loadAppSettings(): Promise<AppSettings> {
+  const current = getSnapshot().settings
+  if (current) return current
+  await warmCache()
+  return getSnapshot().settings ?? (await loadStoredSettings())
+}
 
 export async function getLlmSettings(): Promise<LlmSettings> {
   const settings = await loadAppSettings()
@@ -11,7 +19,7 @@ export async function getLlmSettings(): Promise<LlmSettings> {
 
 export async function saveLlmSettings(settings: LlmSettings): Promise<void> {
   const model: LlmModel = isLlmModel(settings.model) ? settings.model : DEFAULT_MODEL
-  await saveModel(model)
+  await saveModelOptimistic(model)
 }
 
 export async function getLastProfileId(): Promise<string | null> {
@@ -20,7 +28,5 @@ export async function getLastProfileId(): Promise<string | null> {
 }
 
 export async function setLastProfileId(id: string): Promise<void> {
-  await persistLastProfileId(id)
+  rememberLastProfile(id)
 }
-
-export { loadAppSettings }

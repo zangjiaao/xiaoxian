@@ -4,7 +4,9 @@ import { Text } from '@astryxdesign/core/Text'
 import * as stylex from '@stylexjs/stylex'
 import { useEffect } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { warmCache } from '../lib/memory.ts'
 import { styles } from '../styles.ts'
+import { SyncNotice } from './SyncNotice.tsx'
 
 const TABS = [
   { value: 'profiles', label: '档案', path: '/' },
@@ -35,6 +37,10 @@ export function Shell() {
   const navigate = useNavigate()
   const current = tabFromPath(location.pathname)
   const isChat = location.pathname.startsWith('/chat')
+
+  useEffect(() => {
+    void warmCache()
+  }, [])
 
   useEffect(() => {
     syncVisualViewport()
@@ -76,6 +82,7 @@ export function Shell() {
         </TabList>
       </div>
       <main {...stylex.props(styles.main, !isChat && styles.mainSafeBottom)} data-app-main>
+        <SyncNotice />
         <Outlet />
       </main>
     </div>
