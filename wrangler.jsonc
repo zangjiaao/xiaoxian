@@ -30,18 +30,16 @@
     {
       "binding": "DB",
       "database_name": "xiaoxian",
-      // 跑 `wrangler d1 create xiaoxian` 后，把这里换成输出的 UUID。
-      // 这个占位符只够本地 `wrangler dev` 和 `migrations apply --local` 使用。
-      "database_id": "11111111-1111-4111-8111-111111111111",
+      "database_id": "f942d4b1-4e51-4eac-8211-47969b7d8be3",
       "migrations_dir": "migrations"
     }
   ],
   "vars": {
     "DEEPSEEK_MODEL": "deepseek-chat",
     "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
-    // 部署前改成 https://<team>.cloudflareaccess.com 。留空时，非本机请求一律 401。
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
+    // 只填团队源站。末尾斜杠或 /cdn-cgi/access/certs 会被去掉，JWT iss 用这个源站。
+    "ACCESS_TEAM_DOMAIN": "https://delicate-bread-c32c.cloudflareaccess.com",
+    "ACCESS_AUD": "e61f50710d4f19146378ee99a7bc7b4de5767884ad7da18c09aa394d20262631",
     // 只在本机 Host（localhost / 127.0.0.1）上跳过 Access JWT。生产保持空字符串。
     // 本地可在 .dev.vars 里覆盖，例如 DEV_USER_EMAIL=you@example.com
     "DEV_USER_EMAIL": ""
