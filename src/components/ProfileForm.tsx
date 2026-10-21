@@ -66,7 +66,7 @@ export function ProfileForm({
     if (!displayName) nextErrors.display_name = '写一个称呼，自己或朋友的名字都行。'
     if (displayName.length > 40) nextErrors.display_name = '称呼请控制在 40 字以内。'
     if (gender !== 'male' && gender !== 'female') {
-      nextErrors.gender = '选一下性别。大运顺逆会用到，不会上传。'
+      nextErrors.gender = '选一下性别。大运顺逆会用到。'
     }
 
     const birthYear = parseOptionalInt(year)
@@ -151,7 +151,7 @@ export function ProfileForm({
       />
       <RadioList
         label="性别"
-        description="只用来判断大运顺逆，存在这台设备上。"
+        description="只用来判断大运顺逆，跟档案一起存在你的云端账号里。"
         value={gender}
         onChange={(value) => {
           if (value === 'male' || value === 'female') setGender(value)

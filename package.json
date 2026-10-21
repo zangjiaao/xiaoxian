@@ -8,7 +8,12 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview --host 0.0.0.0 --port 43123 --strictPort",
-    "smoke": "node --experimental-strip-types src/lib/chart.smoke.ts",
+    "smoke": "node --experimental-strip-types src/lib/chart.smoke.ts && node --experimental-strip-types worker/access.smoke.ts",
+    "smoke:api": "node scripts/api-smoke.mjs",
+    "cf:dev": "wrangler dev",
+    "cf:types": "wrangler types worker/env.d.ts --strict-vars false --include-runtime true",
+    "cf:migrate:local": "wrangler d1 migrations apply xiaoxian --local",
+    "deploy": "npm run build && wrangler deploy",
     "icons": "node scripts/generate-icons.mjs"
   },
   "browserslist": [
@@ -23,6 +28,7 @@
     "@astryxdesign/theme-neutral": "^0.7.1",
     "@stylexjs/stylex": "^0.19.1",
     "dexie": "^4.4.6",
+    "jose": "^6.2.13",
     "lunar-typescript": "^1.8.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -43,6 +49,7 @@
     "oxlint": "^1.88.0",
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
-    "vite-plugin-pwa": "^2.0.0"
+    "vite-plugin-pwa": "^2.0.0",
+    "wrangler": "^4.151.3"
   }
 }

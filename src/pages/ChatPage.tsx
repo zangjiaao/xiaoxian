@@ -13,13 +13,13 @@ import * as stylex from '@stylexjs/stylex'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MarkdownText } from '../components/MarkdownText.tsx'
-import { db } from '../db.ts'
 import { formatBirth } from '../lib/birth.ts'
 import { computeChart } from '../lib/chart.ts'
 import { createId, nowIso } from '../lib/id.ts'
 import { streamChat } from '../lib/llm.ts'
 import { buildSystemPrompt } from '../lib/prompt.ts'
 import { getLastProfileId, getLlmSettings, setLastProfileId } from '../lib/settings.ts'
+import { listMessages, listProfiles, listSessions, saveMessage, saveSession } from '../lib/store.ts'
 import { styles } from '../styles.ts'
 import type { ChatMessage, ChatSession, Profile } from '../types.ts'
 
@@ -36,7 +36,7 @@ export function ChatPage() {
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [hasKey, setHasKey] = useState(true)
+  const [offline, setOffline] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading')
   const abortRef = useRef<AbortController | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -59,12 +59,11 @@ export function ChatPage() {
     let cancelled = false
     async function load() {
       setStatus('loading')
-      const rows = await db.profiles.toArray()
-      rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+      const loaded = await listProfiles()
+      const rows = loaded.profiles
       if (cancelled) return
       setProfiles(rows)
-      const settings = await getLlmSettings()
-      if (!cancelled) setHasKey(Boolean(settings.apiKey))
+      setOffline(loaded.offline)
       let targetId = id
       if (!targetId) {
         const last = await getLastProfileId()
@@ -80,8 +79,7 @@ export function ChatPage() {
         setStatus(rows.length === 0 ? 'ready' : 'missing')
         return
       }
-      const nextSessions = await db.chat_sessions.where('profile_id').equals(found.id).toArray()
-      nextSessions.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+      const nextSessions = await listSessions(found.id)
       if (cancelled) return
       setProfile(found)
       setSessions(nextSessions)
@@ -104,15 +102,10 @@ export function ChatPage() {
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
-    void db.chat_messages
-      .where('session_id')
-      .equals(sessionId)
-      .toArray()
-      .then((rows) => {
-        if (cancelled) return
-        rows.sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-        setMessages(rows)
-      })
+    void listMessages(sessionId).then((rows) => {
+      if (cancelled) return
+      setMessages(rows)
+    })
     return () => {
       cancelled = true
     }
@@ -127,17 +120,11 @@ export function ChatPage() {
     setStreaming('')
     setStreamingReasoning('')
     const settings = await getLlmSettings()
-    if (!settings.apiKey) {
-      setHasKey(false)
-      setBusy(false)
-      setError('还没有 API Key。填好之后，这句话还在输入框里。')
-      return
-    }
-    setHasKey(true)
 
     const timestamp = nowIso()
     let activeSession = sessionId
-    if (!activeSession) {
+    let activeRecord = sessions.find((session) => session.id === activeSession) ?? null
+    if (!activeSession || !activeRecord) {
       const created: ChatSession = {
         id: createId(),
         profile_id: profile.id,
@@ -145,8 +132,9 @@ export function ChatPage() {
         created_at: timestamp,
         updated_at: timestamp,
       }
-      await db.chat_sessions.put(created)
+      await saveSession(created)
       activeSession = created.id
+      activeRecord = created
       setSessionId(created.id)
       setSessions((current) => [created, ...current])
     }
@@ -158,7 +146,7 @@ export function ChatPage() {
       content,
       created_at: timestamp,
     }
-    await db.chat_messages.put(userMessage)
+    await saveMessage(userMessage)
     const history = [...messages, userMessage]
     setMessages(history)
     setDraft('')
@@ -168,7 +156,7 @@ export function ChatPage() {
     abortRef.current = controller
     try {
       const reply = await streamChat({
-        settings,
+        model: settings.model === 'deepseek-reasoner' ? 'deepseek-reasoner' : 'deepseek-chat',
         signal: controller.signal,
         onDelta: (update) => {
           setStreaming(update.content)
@@ -196,11 +184,13 @@ export function ChatPage() {
         ...(thought ? { reasoning: thought } : {}),
         created_at: nowIso(),
       }
-      await db.chat_messages.put(assistant)
-      await db.chat_sessions.update(activeSession, {
+      await saveMessage(assistant)
+      const touched: ChatSession = {
+        ...activeRecord,
         updated_at: assistant.created_at,
-        title: sessions.find((session) => session.id === activeSession)?.title || content.slice(0, 18),
-      })
+        title: activeRecord.title || content.slice(0, 18),
+      }
+      await saveSession(touched)
       setMessages((current) => [...current, assistant])
       setStreaming('')
       setStreamingReasoning('')
@@ -300,13 +290,12 @@ export function ChatPage() {
             />
           ))}
         </div>
-        {!hasKey ? (
+        {offline ? (
           <Banner
             status="warning"
-            title="还没有模型密钥"
-            description="密钥只写进这台设备的浏览器，请求从这里直接发给 DeepSeek。"
+            title="云端暂时连不上"
+            description="对话记录先看这台设备上的缓存。发送需要网络。"
             collapsible={false}
-            endContent={<Button label="去设置" variant="primary" size="sm" onClick={() => navigate('/settings')} />}
           />
         ) : null}
       </div>

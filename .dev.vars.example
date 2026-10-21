@@ -1,0 +1,7 @@
+# 复制为 .dev.vars。这个文件只给 `wrangler dev` 用，不会被 deploy 上传。
+# DEV_USER_EMAIL 仅在 Host 为 localhost / 127.0.0.1 时跳过 Access JWT。
+DEV_USER_EMAIL=you@example.com
+DEEPSEEK_API_KEY=sk-replace-me
+
+# 可选：把本地聊天指到别的 OpenAI 兼容地址（只允许 https，或本机 http）。
+# DEEPSEEK_BASE_URL=https://api.deepseek.com

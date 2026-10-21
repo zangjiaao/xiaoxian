@@ -1,4 +1,5 @@
 import { AlertDialog } from '@astryxdesign/core/AlertDialog'
+import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Card } from '@astryxdesign/core/Card'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
@@ -8,9 +9,10 @@ import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { db, deleteProfile } from '../db.ts'
+import { LegacyImport } from '../components/LegacyImport.tsx'
 import { formatBirth, genderLabel } from '../lib/birth.ts'
 import { setLastProfileId } from '../lib/settings.ts'
+import { listProfiles, removeProfile } from '../lib/store.ts'
 import type { Profile } from '../types.ts'
 
 export function ProfilesPage() {
@@ -19,15 +21,16 @@ export function ProfilesPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [message, setMessage] = useState('')
   const [pendingDelete, setPendingDelete] = useState<Profile | null>(null)
+  const [offline, setOffline] = useState(false)
 
   async function load() {
     try {
-      const rows = await db.profiles.toArray()
-      rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
-      setProfiles(rows)
+      const result = await listProfiles()
+      setProfiles(result.profiles)
+      setOffline(result.offline)
       setStatus('ready')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '本地档案打不开。')
+      setMessage(error instanceof Error ? error.message : '档案打不开。')
       setStatus('error')
     }
   }
@@ -41,14 +44,14 @@ export function ProfilesPage() {
   }, [])
 
   if (status === 'loading') {
-    return <Text type="supporting">正在打开这台设备上的档案…</Text>
+    return <Text type="supporting">正在打开档案…</Text>
   }
 
   if (status === 'error') {
     return (
       <EmptyState
         title="档案暂时打不开"
-        description={message || '浏览器可能限制了本地数据库。'}
+        description={message || '云端暂时没有回应。'}
         actions={<Button label="再试一次" variant="primary" onClick={() => void load()} />}
       />
     )
@@ -60,8 +63,17 @@ export function ProfilesPage() {
         <Heading level={2}>档案</Heading>
         <Button label="新建档案" variant="primary" onClick={() => navigate('/profiles/new')} />
       </HStack>
+      <LegacyImport onImported={() => void load()} />
+      {offline ? (
+        <Banner
+          status="warning"
+          title="正在看这台设备上的缓存"
+          description="云端暂时连不上。排盘仍可以看，改档案和聊天要等网络回来。"
+          collapsible={false}
+        />
+      ) : null}
       <Text type="supporting">
-        出生时间只留在这台设备的浏览器里。时辰可以先空着，排盘会标成六字。
+        档案按登录邮箱分开存在云端。时辰可以先空着，排盘会标成六字。
       </Text>
       {profiles.length === 0 ? (
         <EmptyState
@@ -123,12 +135,12 @@ export function ProfilesPage() {
           if (!open) setPendingDelete(null)
         }}
         title={pendingDelete ? `删除「${pendingDelete.display_name}」？` : '删除档案？'}
-        description="这台设备上的排盘缓存和聊天记录会一起去掉，不会同步到别处。"
+        description="云端的排盘缓存和聊天记录会一起去掉。"
         actionLabel="删除"
         cancelLabel="留下"
         onAction={() => {
           if (!pendingDelete) return
-          void deleteProfile(pendingDelete.id).then(() => {
+          void removeProfile(pendingDelete.id).then(() => {
             setPendingDelete(null)
             return load()
           })

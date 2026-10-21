@@ -20,7 +20,9 @@ npm run build
 npm run preview
 ```
 
-`npm run smoke` 会用一份固定生日核对四柱、大运顺逆和立春前的流年，不需要网络。
+`npm run smoke` 会用一份固定生日核对四柱、大运顺逆和立春前的流年，并核对 Access JWT 的本地校验，不需要网络。
+
+部署到 Cloudflare 的步骤在 [docs/deploy-cloudflare.md](docs/deploy-cloudflare.md)。本地要连 D1 和聊天代理时，先 `npm run build`，再 `npm run cf:dev`（默认 `http://127.0.0.1:8787`）。`.dev.vars` 里的 `DEV_USER_EMAIL` 只在本机跳过登录。
 
 ## 添加到主屏幕
 
@@ -34,17 +36,14 @@ npm run preview
 
 开发模式默认不启用 Service Worker，避免热更新被旧缓存卡住。
 
-## API Key 只在本地
+## 模型和登录
 
-设置页粘贴 DeepSeek API Key。它只写入这台浏览器的 IndexedDB（Dexie），不会进入代码仓库，也没有后端代发。
+DeepSeek 密钥放在 Worker 的 `DEEPSEEK_API_KEY` secret 里。浏览器不再保存密钥，设置页也没有密钥输入。
 
-- 默认接口：`https://api.deepseek.com`
-- 默认模型：`deepseek-chat`（更快）。设置里可以换成 `deepseek-reasoner`，回复前会多一段可折叠的「思考过程」
-- 也可以改成别的 OpenAI Chat Completions 兼容地址和模型名
-- 换浏览器、换设备或清除站点数据后，需要重新粘贴
-- 同一台设备上能打开这个页面的人，也能读到这把密钥
-
-聊天请求从浏览器直接发到你填写的地址，并尽量以流式输出。
+- 默认模型：`deepseek-chat`。设置里可以换成 `deepseek-reasoner`，回复前会多一段可折叠的「思考过程」
+- 可选模型只有这两个。接口地址由 Worker 的 `DEEPSEEK_BASE_URL` 决定，默认 `https://api.deepseek.com`
+- 聊天请求发到同源的 `/api/chat`，Worker 再以流式（SSE）转给 DeepSeek
+- 线上用 Cloudflare Access 的邮箱一次性验证码。邮箱就是用户 id，档案按邮箱分开
 
 ## 排盘说明
 
@@ -62,7 +61,8 @@ npm run preview
 - UI：`@astryxdesign/core` + `@astryxdesign/theme-neutral`
 - 组件以源码方式交给 `@astryxdesign/build/vite` 编译 StyleX，并拆成 `reset < astryx-base < astryx-theme < product` 层。应用自己的布局也用 StyleX
 - 中文界面文案由应用提供。Astryx 组件字符串通过 `InternationalizationProvider` 使用 `zh-Hans`（语言包文件名仍是上游的 `zh-CN.generated.js`）
-- 本地库：Dexie / IndexedDB，表为 `profiles`、`charts`、`chat_sessions`、`chat_messages`、`settings`
+- 云端：Cloudflare Worker（静态资源 + `/api/*`）、D1、Access JWT。表为 `profiles`、`charts`、`chat_sessions`、`chat_messages`、`settings`，按登录邮箱隔离
+- 浏览器里的 Dexie / IndexedDB 只做离线缓存，以及把旧版本地档案一次性导入云端
 
 本版没有改用 Ant Design。若以后 Astryx 的 Vite 插件无法安装，可以换成薄的 Ant Design 层，页面和数据流不必改。
 
@@ -74,4 +74,4 @@ npm run preview
 
 ## 这版没有做
 
-真太阳时、六爻、神煞、推送通知、后端、Cloudflare Worker、多用户同步。
+真太阳时、六爻、神煞、推送通知。多人各自登录后数据按邮箱分开，没有实时协同编辑。

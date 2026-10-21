@@ -1,3 +1,4 @@
+// Dexie 只做两件事：云端数据的离线缓存，以及升级前本地档案的一次性导入。以 D1 为准。
 import Dexie, { type Table } from 'dexie'
 import type { ChartCache, ChatMessage, ChatSession, Profile } from './types.ts'
 
