@@ -305,6 +305,7 @@ export function ChatPage() {
             presentation={menuPresentation}
             alignment="start"
             menuWidth={280}
+            button={{ label: '切换档案' }}
             items={profiles.map((item) => ({
               id: item.id,
               label: item.display_name,
@@ -328,6 +329,7 @@ export function ChatPage() {
             presentation={menuPresentation}
             alignment="end"
             menuWidth={280}
+            button={{ label: '历史对话' }}
             items={
               sessions.length === 0
                 ? [{ id: 'empty', label: '还没有历史对话', isDisabled: true }]
