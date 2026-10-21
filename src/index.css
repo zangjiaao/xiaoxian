@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light dark;
+  --stylex-injection: 0;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+}
+
+@supports (-webkit-touch-callout: none) {
+  textarea,
+  input,
+  select {
+    font-size: 16px;
+  }
+}
+
+[data-astryx-theme] {
+  --font-family-body: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    "Microsoft YaHei", "WenQuanYi Micro Hei", Figtree, sans-serif;
+  --font-family-heading: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    "Microsoft YaHei", "WenQuanYi Micro Hei", Figtree, sans-serif;
+}
