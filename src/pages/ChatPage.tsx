@@ -10,8 +10,9 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { VStack } from '@astryxdesign/core/VStack'
 import * as stylex from '@stylexjs/stylex'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { MarkdownText } from '../components/MarkdownText.tsx'
 import { db } from '../db.ts'
 import { formatBirth } from '../lib/birth.ts'
 import { computeChart } from '../lib/chart.ts'
@@ -38,7 +39,7 @@ export function ChatPage() {
   const [hasKey, setHasKey] = useState(true)
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading')
   const abortRef = useRef<AbortController | null>(null)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     document.title = '聊聊 · 小闲'
@@ -48,9 +49,11 @@ export function ChatPage() {
     return () => abortRef.current?.abort()
   }, [])
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, streaming, streamingReasoning, busy])
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    list.scrollTop = list.scrollHeight
+  }, [messages, streaming, streamingReasoning, busy, sessionId])
 
   useEffect(() => {
     let cancelled = false
@@ -223,9 +226,7 @@ export function ChatPage() {
   function Thought({ text, open = false }: { text: string; open?: boolean }) {
     return (
       <Collapsible defaultIsOpen={open} trigger={<Text type="supporting">思考过程</Text>}>
-        <Text type="supporting" {...stylex.props(styles.prose)}>
-          {text}
-        </Text>
+        <MarkdownText text={text} tone="secondary" />
       </Collapsible>
     )
   }
@@ -256,58 +257,60 @@ export function ChatPage() {
   }
 
   return (
-    <VStack gap={3}>
-      <Heading level={2}>和{profile.display_name}聊聊</Heading>
-      <Text type="supporting">
-        小闲会带上这张盘的机器排盘。问批盘或运势时，它按日主、十神、五行、格局、大运、流年来写；聊今天的事，就短一些。
-      </Text>
-      <Selector
-        label="档案"
-        options={profiles.map((item) => ({
-          value: item.id,
-          label: item.display_name,
-          description: formatBirth(item),
-        }))}
-        value={profile.id}
-        onChange={(value) => {
-          if (value && value !== profile.id) navigate(`/chat/${value}`)
-        }}
-      />
-      <div {...stylex.props(styles.row)}>
-        <Button
-          label="新对话"
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            setSessionId(null)
-            setMessages([])
-            setStreaming('')
-            setStreamingReasoning('')
-            setError('')
+    <div {...stylex.props(styles.chatScreen)}>
+      <div {...stylex.props(styles.chatToolbar)}>
+        <Heading level={2}>和{profile.display_name}聊聊</Heading>
+        <Text type="supporting">
+          小闲会带上这张盘的机器排盘。问批盘或运势时，它按日主、十神、五行、格局、大运、流年来写；聊今天的事，就短一些。
+        </Text>
+        <Selector
+          label="档案"
+          options={profiles.map((item) => ({
+            value: item.id,
+            label: item.display_name,
+            description: formatBirth(item),
+          }))}
+          value={profile.id}
+          onChange={(value) => {
+            if (value && value !== profile.id) navigate(`/chat/${value}`)
           }}
-          isDisabled={busy}
         />
-        {sessions.map((session) => (
+        <div {...stylex.props(styles.sessionRow)}>
           <Button
-            key={session.id}
-            label={session.title || '未命名'}
+            label="新对话"
+            variant="secondary"
             size="sm"
-            variant={session.id === sessionId ? 'primary' : 'ghost'}
-            onClick={() => setSessionId(session.id)}
+            onClick={() => {
+              setSessionId(null)
+              setMessages([])
+              setStreaming('')
+              setStreamingReasoning('')
+              setError('')
+            }}
             isDisabled={busy}
           />
-        ))}
+          {sessions.map((session) => (
+            <Button
+              key={session.id}
+              label={session.title || '未命名'}
+              size="sm"
+              variant={session.id === sessionId ? 'primary' : 'ghost'}
+              onClick={() => setSessionId(session.id)}
+              isDisabled={busy}
+            />
+          ))}
+        </div>
+        {!hasKey ? (
+          <Banner
+            status="warning"
+            title="还没有模型密钥"
+            description="密钥只写进这台设备的浏览器，请求从这里直接发给 DeepSeek。"
+            collapsible={false}
+            endContent={<Button label="去设置" variant="primary" size="sm" onClick={() => navigate('/settings')} />}
+          />
+        ) : null}
       </div>
-      {!hasKey ? (
-        <Banner
-          status="warning"
-          title="还没有模型密钥"
-          description="密钥只写进这台设备的浏览器，请求从这里直接发给 DeepSeek。"
-          collapsible={false}
-          endContent={<Button label="去设置" variant="primary" size="sm" onClick={() => navigate('/settings')} />}
-        />
-      ) : null}
-      <div {...stylex.props(styles.messages)}>
+      <div ref={listRef} {...stylex.props(styles.messages)} data-chat-messages>
         {messages.length === 0 && !streaming ? (
           <Text type="supporting">比如：今天开会有点顶，我想看看这更像性格，还是只是没睡够。</Text>
         ) : null}
@@ -321,7 +324,11 @@ export function ChatPage() {
             <VStack gap={1}>
               <Text type="supporting">{message.role === 'user' ? profile.display_name : '小闲'}</Text>
               {message.reasoning ? <Thought text={message.reasoning} /> : null}
-              <Text {...stylex.props(styles.prose)}>{message.content}</Text>
+              {message.role === 'assistant' ? (
+                <MarkdownText text={message.content} />
+              ) : (
+                <Text {...stylex.props(styles.prose)}>{message.content}</Text>
+              )}
             </VStack>
           </Card>
         ))}
@@ -330,36 +337,41 @@ export function ChatPage() {
             <VStack gap={1}>
               <Text type="supporting">小闲</Text>
               {streamingReasoning ? <Thought text={streamingReasoning} open /> : null}
-              <Text {...stylex.props(styles.prose)}>{streaming || '在想怎么说…'}</Text>
+              {streaming ? <MarkdownText text={streaming} /> : <Text {...stylex.props(styles.prose)}>在想怎么说…</Text>}
             </VStack>
           </Card>
         ) : null}
-        <div ref={bottomRef} />
       </div>
-      {error ? <Banner status="error" title="这次没聊完" description={error} collapsible={false} /> : null}
-      <TextArea
-        label="今天想聊的"
-        value={draft}
-        onChange={setDraft}
-        rows={4}
-        placeholder="写一件具体的事，比问「我今年运气如何」更有用。"
-        isDisabled={busy}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault()
-            void send()
-          }
-        }}
-      />
-      <HStack gap={2}>
-        <Button
-          label={busy ? '正在回复' : '发送'}
-          variant="primary"
-          onClick={() => void send()}
-          isDisabled={busy || draft.trim().length === 0}
+      <div {...stylex.props(styles.composer)} data-chat-composer>
+        {error ? <Banner status="error" title="这次没聊完" description={error} collapsible={false} /> : null}
+        <TextArea
+          label="今天想聊的"
+          value={draft}
+          onChange={setDraft}
+          rows={3}
+          placeholder="写一件具体的事，比问「我今年运气如何」更有用。"
+          isDisabled={busy}
+          onFocus={() => {
+            const list = listRef.current
+            if (list) list.scrollTop = list.scrollHeight
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              void send()
+            }
+          }}
         />
-        {busy ? <Button label="停止" variant="secondary" onClick={stop} /> : null}
-      </HStack>
-    </VStack>
+        <HStack gap={2}>
+          <Button
+            label={busy ? '正在回复' : '发送'}
+            variant="primary"
+            onClick={() => void send()}
+            isDisabled={busy || draft.trim().length === 0}
+          />
+          {busy ? <Button label="停止" variant="secondary" onClick={stop} /> : null}
+        </HStack>
+      </div>
+    </div>
   )
 }

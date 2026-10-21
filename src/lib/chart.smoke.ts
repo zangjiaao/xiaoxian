@@ -1,5 +1,6 @@
 import { computeChart, formatChartReport } from './chart.ts'
 import { parseCompletionPayload } from './llm.ts'
+import { stabilizeMarkdown } from './markdown.ts'
 import type { Profile } from '../types.ts'
 
 function profile(partial: Partial<Profile> & Pick<Profile, 'gender' | 'birth_hour'>): Profile {
@@ -74,5 +75,7 @@ const answer = parseCompletionPayload(
   JSON.stringify({ choices: [{ delta: { content: '结论' }, message: { reasoning_content: '忽略' } }] }),
 )
 assert(answer.content === '结论' && answer.reasoning === '', '流式正文优先于 message')
+assert(stabilizeMarkdown('## 标题\n```\n未闭合').endsWith('\n```'), '未闭合代码围栏应补上')
+assert(stabilizeMarkdown('```\nok\n```') === '```\nok\n```', '成对围栏不要再补')
 
 console.log('chart smoke ok', chart.dayMaster, chart.currentDaYun?.label, chart.liuNian.ganZhi)

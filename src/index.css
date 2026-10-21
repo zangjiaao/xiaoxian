@@ -7,12 +7,20 @@ html,
 body,
 #root {
   margin: 0;
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@supports (-webkit-touch-callout: none) {
+  textarea,
+  input,
+  select {
+    font-size: 16px;
+  }
 }
 
 [data-astryx-theme] {
