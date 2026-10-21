@@ -121,12 +121,11 @@ Access 挡住的是浏览器入口。Worker 再验一次 JWT，避免有人绕�
 "routes": [{ "pattern": "xiaoxian.example.com", "custom_domain": true }]
 ```
 
-自定义域名加上之后，关掉不该公开的入口，否则没走 Access 的地址仍能打开页面：
+`wrangler.jsonc` 里已经写了 `"workers_dev": false` 和 `"preview_urls": false`（Wrangler 4.151 的配置字段就是这两个名字）。下次 `npm run deploy` 会关掉 `*.workers.dev` 和 Preview URL。只在仪表盘里关、配置里不写的话，下次 deploy 会把 `workers.dev` 重新打开。`preview_urls` 不写时，Wrangler 不会改已有的预览开关，所以这里显式写成 `false`。
 
-- 在同一页关掉这个 Worker 的 **workers.dev**。配置里也可以写 `"workers_dev": false`。只在仪表盘里关、配置里不写的话，下次 `wrangler deploy` 会把它重新打开。
-- 如果不需要预览地址，把 Preview URLs 也关掉（`preview_urls` 不要设成 `true`）。
+自定义域名如果是在仪表盘绑的，**不要**把 `routes` 写进 `wrangler.jsonc`。配置里没有 `routes` 时，deploy 不会解绑仪表盘上的域名。一旦写了 `routes`（或 `route`），Wrangler 会用这份列表覆盖该 Worker 的路由和自定义域名。上面的 `routes` 示例只适合从一开始就用配置管理域名的情况。
 
-Access 应用的 hostname 必须覆盖你真正给人的那个域名。`workers.dev` 如果还开着，要单独再加一条 Access 策略，或者干脆关掉。
+Access 应用的 hostname 必须覆盖你真正给人的那个域名。`workers.dev` 关掉之后，没走 Access 的预览地址也不会再公开。
 
 ## 7. 朋友第一次打开
 

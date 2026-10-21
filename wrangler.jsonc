@@ -2,6 +2,10 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "xiaoxian",
   "main": "worker/index.ts",
+  // 关掉 workers.dev 和版本预览地址。自定义域名在仪表盘绑定，这里不要写 routes：
+  // 不写时 deploy 不会动仪表盘上的域名；写了才会用这份配置覆盖。
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_date": "2026-10-21",
   "compatibility_flags": ["nodejs_compat"],
   "upload_source_maps": true,
