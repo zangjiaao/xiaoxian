@@ -8,85 +8,68 @@ import { Selector } from '@astryxdesign/core/Selector'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import * as stylex from '@stylexjs/stylex'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { listProfiles, saveChart } from '../lib/store.ts'
 import { formatBirth, genderLabel } from '../lib/birth.ts'
 import { computeChart, currentDaYunLine, liuNianLine } from '../lib/chart.ts'
 import { nowIso } from '../lib/id.ts'
-import { getLastProfileId, setLastProfileId } from '../lib/settings.ts'
+import { dayKey, rememberChart, rememberLastProfile, useMemorySelector, warmCache } from '../lib/memory.ts'
+import { saveChart } from '../lib/store.ts'
 import { styles } from '../styles.ts'
-import type { ChartPayload, Profile } from '../types.ts'
 
 export function ChartPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [profiles, setProfiles] = useState<Profile[]>([])
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [chart, setChart] = useState<ChartPayload | null>(null)
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading')
-  const [message, setMessage] = useState('')
+  const booted = useMemorySelector((state) => state.booted)
+  const profiles = useMemorySelector((state) => state.profiles)
+  const status = useMemorySelector((state) => state.profilesStatus)
+  const message = useMemorySelector((state) => state.profilesError) ?? ''
+  const lastProfileId = useMemorySelector((state) => state.settings?.lastProfileId ?? null)
+  const cachedChart = useMemorySelector((state) => (id ? state.charts[id] : undefined))
+  const profile = profiles?.find((item) => item.id === id) ?? null
+  const today = dayKey()
+  const chart = useMemo(() => {
+    if (!profile) return cachedChart?.payload ?? null
+    if (cachedChart && cachedChart.updatedAt === profile.updated_at && cachedChart.day === today) {
+      return cachedChart.payload
+    }
+    return computeChart(profile)
+  }, [cachedChart, profile, today])
 
   useEffect(() => {
     document.title = '排盘 · 小闲'
+    void warmCache()
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setStatus('loading')
-      try {
-        const loaded = await listProfiles()
-        const rows = loaded.profiles
-        if (cancelled) return
-        setProfiles(rows)
-        let targetId = id
-        if (!targetId) {
-          const last = await getLastProfileId()
-          targetId = rows.find((row) => row.id === last)?.id ?? rows[0]?.id
-          if (targetId) {
-            navigate(`/chart/${targetId}`, { replace: true })
-            return
-          }
-        }
-        const found = rows.find((row) => row.id === targetId) ?? null
-        if (!found) {
-          setProfile(null)
-          setChart(null)
-          setStatus(rows.length === 0 ? 'ready' : 'missing')
-          return
-        }
-        const nextChart = computeChart(found)
-        setProfile(found)
-        setChart(nextChart)
-        setStatus('ready')
-        await setLastProfileId(found.id)
-        await saveChart({
-          id: found.id,
-          profile_id: found.id,
-          computed_at: nowIso(),
-          clock_mode: 'civil',
-          payload_json: JSON.stringify(nextChart),
-        })
-      } catch (error) {
-        if (cancelled) return
-        setMessage(error instanceof Error ? error.message : '排盘没有算出来。')
-        setStatus('error')
-      }
-    }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [id, navigate])
+    if (status !== 'ready' || !profiles) return
+    if (id) return
+    const target = profiles.find((item) => item.id === lastProfileId)?.id ?? profiles[0]?.id
+    if (target) navigate(`/chart/${target}`, { replace: true })
+  }, [id, lastProfileId, navigate, profiles, status])
 
-  if (status === 'loading') return <Text type="supporting">正在排盘…</Text>
+  useEffect(() => {
+    if (!profile || !chart) return
+    rememberChart(profile, chart)
+    rememberLastProfile(profile.id)
+    void saveChart({
+      id: profile.id,
+      profile_id: profile.id,
+      computed_at: nowIso(),
+      clock_mode: 'civil',
+      payload_json: JSON.stringify(chart),
+    })
+  }, [chart, profile])
 
-  if (status === 'error') {
-    return <EmptyState title="这次没排出来" description={message} />
+  if (!booted && !profile && !profiles) return null
+
+  if (status === 'error' && !profile) {
+    return <EmptyState title="这次没排出来" description={message || '云端暂时没有回应。'} />
   }
 
-  if (profiles.length === 0) {
+  if ((status !== 'ready' || !profiles) && !profile) return <Text type="supporting">正在排盘…</Text>
+
+  if (!profiles || profiles.length === 0) {
     return (
       <EmptyState
         title="还没有可以排的档案"
@@ -96,7 +79,8 @@ export function ChartPage() {
     )
   }
 
-  if (!profile || !chart || status === 'missing') {
+  if (!id || !profile || !chart) {
+    if (!id || status !== 'ready') return <Text type="supporting">正在排盘…</Text>
     return (
       <EmptyState
         title="没有这份档案"

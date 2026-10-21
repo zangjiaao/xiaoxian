@@ -81,6 +81,10 @@ export const styles = stylex.create({
     borderBottomStyle: 'solid',
     borderBottomColor: colorVars['--color-border'],
   },
+  syncNotice: {
+    flexShrink: 0,
+    marginBottom: '8px',
+  },
   main: {
     flexGrow: 1,
     flexShrink: 1,

@@ -11,51 +11,43 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LegacyImport } from '../components/LegacyImport.tsx'
 import { formatBirth, genderLabel } from '../lib/birth.ts'
+import { isCacheWarm, refreshAfterImport, removeProfileOptimistic, retryProfiles, useMemorySelector, warmCache } from '../lib/memory.ts'
 import { setLastProfileId } from '../lib/settings.ts'
-import { listProfiles, removeProfile } from '../lib/store.ts'
 import { styles } from '../styles.ts'
 import type { Profile } from '../types.ts'
 
 export function ProfilesPage() {
   const navigate = useNavigate()
-  const [profiles, setProfiles] = useState<Profile[]>([])
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [message, setMessage] = useState('')
+  const booted = useMemorySelector((state) => state.booted)
+  const profiles = useMemorySelector((state) => state.profiles)
+  const status = useMemorySelector((state) => state.profilesStatus)
+  const message = useMemorySelector((state) => state.profilesError) ?? ''
+  const offline = useMemorySelector((state) => state.offline)
   const [pendingDelete, setPendingDelete] = useState<Profile | null>(null)
-  const [offline, setOffline] = useState(false)
-
-  async function load() {
-    try {
-      const result = await listProfiles()
-      setProfiles(result.profiles)
-      setOffline(result.offline)
-      setStatus('ready')
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : '档案打不开。')
-      setStatus('error')
-    }
-  }
 
   useEffect(() => {
-    void load()
+    if (isCacheWarm()) retryProfiles()
+    else void warmCache()
   }, [])
 
   useEffect(() => {
     document.title = '档案 · 小闲'
   }, [])
 
-  if (status === 'loading') {
-    return <Text type="supporting">正在打开档案…</Text>
-  }
+  if (!booted && !profiles) return null
 
-  if (status === 'error') {
+  if (status === 'error' && !profiles) {
     return (
       <EmptyState
         title="档案暂时打不开"
         description={message || '云端暂时没有回应。'}
-        actions={<Button label="再试一次" variant="primary" onClick={() => void load()} />}
+        actions={<Button label="再试一次" variant="primary" onClick={() => retryProfiles()} />}
       />
     )
+  }
+
+  if (status !== 'ready' || !profiles) {
+    return <Text type="supporting">正在打开档案…</Text>
   }
 
   return (
@@ -66,7 +58,7 @@ export function ProfilesPage() {
         </Heading>
         <Button label="新建档案" variant="primary" onClick={() => navigate('/profiles/new')} />
       </HStack>
-      <LegacyImport onImported={() => void load()} />
+      <LegacyImport onImported={() => refreshAfterImport()} />
       {offline ? (
         <Banner
           status="warning"
@@ -143,10 +135,7 @@ export function ProfilesPage() {
         cancelLabel="留下"
         onAction={() => {
           if (!pendingDelete) return
-          void removeProfile(pendingDelete.id).then(() => {
-            setPendingDelete(null)
-            return load()
-          })
+          void removeProfileOptimistic(pendingDelete.id).finally(() => setPendingDelete(null))
         }}
       />
     </VStack>

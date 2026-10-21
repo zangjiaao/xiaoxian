@@ -2,12 +2,11 @@ import { Button } from '@astryxdesign/core/Button'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ProfileForm, type ProfileDraft } from '../components/ProfileForm.tsx'
-import { getProfile, saveProfile } from '../lib/store.ts'
 import { createId, nowIso } from '../lib/id.ts'
-import { setLastProfileId } from '../lib/settings.ts'
+import { ensureProfile, rememberLastProfile, stageProfile, syncProfile, useMemorySelector, warmCache } from '../lib/memory.ts'
 import { styles } from '../styles.ts'
 import type { Profile } from '../types.ts'
 
@@ -15,28 +14,20 @@ export function ProfileFormPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const isEdit = Boolean(id)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>(id ? 'loading' : 'ready')
+  const booted = useMemorySelector((state) => state.booted)
+  const profiles = useMemorySelector((state) => state.profiles)
+  const status = useMemorySelector((state) => state.profilesStatus)
+  const miss = useMemorySelector((state) => (id ? state.profileMiss[id] === true : false))
+  const loadError = useMemorySelector((state) => state.profilesError)
+  const profile = id ? (profiles?.find((item) => item.id === id) ?? null) : null
 
   useEffect(() => {
     document.title = `${isEdit ? '编辑档案' : '新建档案'} · 小闲`
   }, [isEdit])
 
   useEffect(() => {
-    if (!id) return
-    let cancelled = false
-    void getProfile(id).then((row) => {
-      if (cancelled) return
-      if (!row) {
-        setStatus('missing')
-        return
-      }
-      setProfile(row)
-      setStatus('ready')
-    })
-    return () => {
-      cancelled = true
-    }
+    void warmCache()
+    if (id) ensureProfile(id)
   }, [id])
 
   async function save(draft: ProfileDraft) {
@@ -47,13 +38,13 @@ export function ProfileFormPage() {
       created_at: profile?.created_at ?? timestamp,
       updated_at: timestamp,
     }
-    await saveProfile(next)
-    await setLastProfileId(next.id)
+    await stageProfile(next)
+    rememberLastProfile(next.id)
+    void syncProfile(next.id).catch(() => undefined)
     navigate(`/chart/${next.id}`)
   }
 
-  if (status === 'loading') return <Text type="supporting">正在读取档案…</Text>
-  if (status === 'missing') {
+  if (id && !profile && miss) {
     return (
       <VStack gap={3}>
         <Heading level={2} xstyle={styles.pageTitle}>
@@ -63,6 +54,21 @@ export function ProfileFormPage() {
       </VStack>
     )
   }
+
+  if (id && !profile && loadError && status !== 'loading') {
+    return (
+      <VStack gap={3}>
+        <Heading level={2} xstyle={styles.pageTitle}>
+          档案暂时打不开
+        </Heading>
+        <Text type="supporting">{loadError}</Text>
+        <Button label="回到档案" variant="primary" onClick={() => navigate('/')} />
+      </VStack>
+    )
+  }
+
+  if (id && !profile && !booted) return null
+  if (id && !profile) return <Text type="supporting">正在读取档案…</Text>
 
   return (
     <VStack gap={4}>
